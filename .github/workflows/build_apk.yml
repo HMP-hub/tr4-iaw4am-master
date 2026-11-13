@@ -11,25 +11,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Gerar buildozer.spec
-        run: |
-          pip install buildozer
-          yes | buildozer init
-          sed -i 's/title = My Application/title = TR4 IAW4AM Master/g' buildozer.spec
-          sed -i 's/package.name = myapp/package.name = tr4iaw4am/g' buildozer.spec
-          sed -i 's/package.domain = org.test/package.domain = br.mitsubishi/g' buildozer.spec
-          sed -i 's/requirements = python3,kivy/requirements = python3,kivy,pyjnius/g' buildozer.spec
-          sed -i 's/#android.permissions = INTERNET/android.permissions = BLUETOOTH,BLUETOOTH_ADMIN,BLUETOOTH_CONNECT,BLUETOOTH_SCAN,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE/g' buildozer.spec
-          sed -i 's/android.archs = arm64-v8a, armeabi-v7a/android.archs = arm64-v8a/g' buildozer.spec
-
-      - name: Compilar APK via Docker Oficial Kivy
+      - name: Compilar APK
         uses: ArtemSBulgakov/buildozer-action@v1
         id: buildozer
         with:
-          buildozer_version: master
+          buildozer_version: stable
           command: buildozer android debug
 
-      - name: Disponibilizar APK para Download
+      - name: Disponibilizar APK
         uses: actions/upload-artifact@v4
         with:
           name: TR4-IAW4AM-APK
