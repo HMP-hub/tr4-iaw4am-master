@@ -1,0 +1,44 @@
+name: Build APK TR4 IAW4AM
+
+on:
+  push:
+    branches: [ "main", "principal" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Instalar dependencias do sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
+
+      - name: Instalar Buildozer e Cython
+        run: |
+          pip install --upgrade pip
+          pip install buildozer cython==0.29.36
+
+      - name: Gerar buildozer.spec e compilar APK
+        run: |
+          yes | buildozer init
+          sed -i 's/title = My Application/title = TR4 IAW4AM Master/g' buildozer.spec
+          sed -i 's/package.name = myapp/package.name = tr4iaw4am/g' buildozer.spec
+          sed -i 's/package.domain = org.test/package.domain = br.mitsubishi/g' buildozer.spec
+          sed -i 's/requirements = python3,kivy/requirements = python3,kivy,pyjnius/g' buildozer.spec
+          sed -i 's/#android.permissions = INTERNET/android.permissions = BLUETOOTH,BLUETOOTH_ADMIN,BLUETOOTH_CONNECT,BLUETOOTH_SCAN,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE/g' buildozer.spec
+          sed -i 's/android.archs = arm64-v8a, armeabi-v7a/android.archs = arm64-v8a/g' buildozer.spec
+          yes | buildozer android debug
+
+      - name: Disponibilizar APK para Download
+        uses: actions/upload-artifact@v4
+        with:
+          name: TR4-IAW4AM-APK
+          path: bin/*.apk
