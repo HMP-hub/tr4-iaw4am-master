@@ -20,7 +20,7 @@ class TR4EngineMixin:
         self.desconectar_ecu()
         self.modo_simulacao = True
         self.rodando = True
-        self.lbl_status.text = "SIMULACAO ATIVA | ECU: IAW 4AM.AR"
+        self.lbl_status.text = "SIMULACAO ATIVA | ECU: IAW 4AM"
         self.lbl_status.color = (0.3, 0.9, 0.5, 1)
         threading.Thread(target=self.loop_leitura, daemon=True).start()
 
@@ -374,12 +374,11 @@ class TR4EngineMixin:
     def ler_info_ecu(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = (
-                "Desenho FIAT: CA130195\n"
-                "Numero HW: IAW4AMHWM44 (Ver: 00)\n"
-                "Numero SW: 0401BA83 (Ver: 0000)\n"
-                "Homologacao: 4AMMS | ISO: 0000000000\n"
-                "Data Programacao: 20/10/2009\n"
-                "Reescritas Flash: 1 | Odo Reescr: 0 km\n"
+                "Codigo Desenho ECU: CA130195\n\n"
+                "Numero Hardware: IAW4AMHWM44\n\n"
+                "Numero Software: 0401BA83\n\n"
+                "Homologacao: 4AMMS\n\n"
+                "Data Programacao: 20/10/2009\n\n"
                 "Odometro Real ECU: 69.456 km"
             )
             return
@@ -387,7 +386,7 @@ class TR4EngineMixin:
             self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ECU primeiro."
             return
         self.rodando = False
-        self.lbl_eng.text = "Lendo identificacao completa e odometro da ECU..."
+        self.lbl_eng.text = "Lendo identificacao e odometro da ECU..."
         threading.Thread(target=self._ler_info_ecu_thread, daemon=True).start()
 
     def _ler_info_ecu_thread(self):
@@ -396,20 +395,16 @@ class TR4EngineMixin:
         time.sleep(0.25)
         b80 = self.parse_bytes_kwp(self.enviar_comando_raw("2180", timeout=2.0), "2180")
         b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171", timeout=1.5), "2171")
-        b72 = self.parse_bytes_kwp(self.enviar_comando_raw("2172", timeout=1.5), "2172")
-        b73 = self.parse_bytes_kwp(self.enviar_comando_raw("2173", timeout=1.5), "2173")
 
         if len(b80) >= 61:
             desenho = _ascii(b80[0:11]) or "N/D"
             hw = _ascii(b80[11:22]) or "N/D"
-            hw_ver = f"{b80[22]:02X}"
             sw = _ascii(b80[23:34]) or "N/D"
-            sw_ver = f"{b80[34]:02X}{b80[35]:02X}"
             homolog = _ascii(b80[36:42]) or "N/D"
-            iso = "".join(f"{x:02X}" for x in b80[42:47])
-            data_prog = f"{b80[60]:02X}/{b80[59]:02X}/20{b80[58]:02X}"
+            d_dia, d_mes, d_ano = itemgetter(60, 59, 58)(b80)
+            data_prog = f"{d_dia:02X}/{d_mes:02X}/20{d_ano:02X}"
         else:
-            desenho, hw, hw_ver, sw, sw_ver, homolog, iso, data_prog = ("N/D", "N/D", "00", "N/D", "0000", "N/D", "N/D", "N/D")
+            desenho, hw, sw, homolog, data_prog = ("N/D", "N/D", "N/D", "N/D", "N/D")
 
         odo_txt = "Nao disponivel"
         if len(b71) >= 3:
@@ -417,16 +412,12 @@ class TR4EngineMixin:
             km_val = (b_o0 << 16) | (b_o1 << 8) | b_o2
             odo_txt = f"{km_val:,} km".replace(",", ".")
 
-        reescr = ((b72[0] << 8) | b72[1]) if len(b72) >= 2 else 0
-        odo_reescr = ((b73[0] << 16) | (b73[1] << 8) | b73[2]) if len(b73) >= 3 else 0
-
         texto = (
-            f"Desenho FIAT: {desenho}\n"
-            f"Numero HW: {hw} (Ver: {hw_ver})\n"
-            f"Numero SW: {sw} (Ver: {sw_ver})\n"
-            f"Homologacao: {homolog} | ISO: {iso}\n"
-            f"Data Programacao: {data_prog}\n"
-            f"Reescritas Flash: {reescr} | Odo Reescr: {odo_reescr} km\n"
+            f"Codigo Desenho ECU: {desenho}\n\n"
+            f"Numero Hardware: {hw}\n\n"
+            f"Numero Software: {sw}\n\n"
+            f"Homologacao: {homolog}\n\n"
+            f"Data Programacao: {data_prog}\n\n"
             f"Odometro Real ECU: {odo_txt}"
         )
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", texto))
@@ -460,8 +451,8 @@ class TR4EngineMixin:
                 prefixos = {"0": "P0", "1": "P1", "2": "P2", "3": "P3", "4": "C0", "8": "B0", "C": "U0"}
                 for i in range(0, len(dados) - 5, 6):
                     dtc_hex = dados[i:i + 4]
-                    p_letra = prefixos.get(dtc_hex[0], "P" + dtc_hex[0])
-                    cods.append(f"{p_letra}{dtc_hex[1:]}")
+                    p_letra = prefixos.get(dtc_hex[:1], "P" + dtc_hex[:1])
+                    cods.append(f"{p_letra}{dtc_hex[1:4]}")
                 msg = f"Falhas encontradas ({qtd}):\n\n" + (", ".join(cods) if cods else dados)
         else:
             msg = f"Retorno da ECU:\n{resp if resp else 'Sem resposta'}"
@@ -504,7 +495,7 @@ class TR4EngineMixin:
             self.lbl_status.text = "ECU DESCONECTADA | BLUETOOTH ATIVO"
             self.lbl_status.color = (0.3, 0.85, 1.0, 1)
         else:
-            self.lbl_status.text = "DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)"
+            self.lbl_status.text = "DESCONECTADO | ECU: IAW 4AM"
             self.lbl_status.color = (1, 0.78, 0.2, 1)
 
     def iniciar_varredura_ecu(self, *args):
