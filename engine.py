@@ -84,7 +84,6 @@ class TR4EngineMixin:
             return []
         dados_hex = limpo[idx + 4:]
         return [int(dados_hex[i:i + 2], 16) for i in range(0, len(dados_hex) - 1, 2)]
-
     def loop_leitura(self):
         t0 = time.time()
         while self.rodando:
@@ -130,10 +129,11 @@ class TR4EngineMixin:
     def atualizar_interface(self, dt):
         for pid_id, (lbl_val, unidade) in self.cards_ui.items():
             lbl_val.text = f"{self.valores_atuais.get(pid_id, '--')} {unidade}"
-        if hasattr(self, "grafico_widget"):
-            val_graf = self.valores_atuais.get(self.pid_grafico_id)
-            if isinstance(val_graf, (int, float)):
-                self.grafico_widget.adicionar_ponto(val_graf)
+        if hasattr(self, "graficos_lista") and hasattr(self, "pids_graf"):
+            for idx, graf in enumerate(self.graficos_lista):
+                val = self.valores_atuais.get(self.pids_graf[idx])
+                if isinstance(val, (int, float)):
+                    graf.adicionar_ponto(val)
 
     def iniciar_gravacao_log(self, *args):
         if self.gravando_log:
