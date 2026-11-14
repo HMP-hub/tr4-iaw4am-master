@@ -5,6 +5,10 @@ on:
     branches: [ "main", "principal" ]
   workflow_dispatch:
 
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -17,9 +21,9 @@ jobs:
         with:
           python-version: '3.11.8'
 
-      - name: Validar main.py
+      - name: Validar sintaxe Python
         run: |
-          python3 -m py_compile main.py
+          python3 -m py_compile main.py engine.py pids.py
 
       - name: Configurar Java 17
         uses: actions/setup-java@v4
