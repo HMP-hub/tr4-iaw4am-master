@@ -8,10 +8,10 @@ b1 = itemgetter(1)
 
 
 def decode_malha_completa(bytes_a5):
-    if len(bytes_a5) < 7:
+    if len(bytes_a5) < 6:
         return "SEM DADOS"
-    d = bytes_a5.pop(3)
-    g = bytes_a5.pop(5)
+    d = bytes_a5[3]
+    g = bytes_a5[5]
     if d == 0:
         return "EMERGENCIA"
     if d == 1 and g == 1:
@@ -27,8 +27,8 @@ def decode_malha_completa(bytes_a5):
 
 PIDS_DB = [
     {"id": "STATUS_MALHA", "nome": "Status Malha Completo", "categoria": "Mistura & Flex", "cmd": "21A5", "unidade": "State", "rapido": True, "calc": lambda b: decode_malha_completa(list(b)), "sim": lambda t: random.choice(["CL - LENTA", "CL - CRUZEIRO", "OL - WOT", "OL - CUTOFF/FRIO"])},
-    {"id": "STFT", "nome": "STFT (Integrador Lambda)", "categoria": "Mistura & Flex", "cmd": "2147", "unidade": "%", "rapido": True, "calc": lambda b: round(((b0(b) - 160) / 160.0) * 100.0, 1) if len(b) >= 1 else 0.0, "sim": lambda t: round(math.sin(t * 2.5) * 6.5 + 2.0, 1)},
-    {"id": "LTFT", "nome": "LTFT (Auto-Adaptativo)", "categoria": "Mistura & Flex", "cmd": "2179", "unidade": "%", "rapido": True, "calc": lambda b: round(((b0(b) - 160) / 160.0) * 100.0, 1) if len(b) >= 1 else 0.0, "sim": lambda t: 3.8},
+    {"id": "STFT", "nome": "STFT (Integrador Lambda)", "categoria": "Mistura & Flex", "cmd": "2147", "unidade": "%", "rapido": True, "calc": lambda b: round(((b0(b) - 156) / 156.0) * 100.0, 1) if len(b) >= 1 else 0.0, "sim": lambda t: round(math.sin(t * 2.5) * 6.5 + 2.0, 1)},
+    {"id": "LTFT", "nome": "LTFT (Auto-Adaptativo)", "categoria": "Mistura & Flex", "cmd": "2179", "unidade": "%", "rapido": True, "calc": lambda b: round(((b0(b) - 156) / 156.0) * 100.0, 1) if len(b) >= 1 else 0.0, "sim": lambda t: 3.8},
     {"id": "AFR_ALVO", "nome": "AFR Alvo (Mapa SFS)", "categoria": "Mistura & Flex", "cmd": "217B", "unidade": "AFR", "rapido": True, "calc": lambda b: round((b1(b) if len(b) >= 2 else b0(b)) / 10.0, 1) if len(b) >= 1 else 13.2, "sim": lambda t: 13.2},
     {"id": "ETANOL_REAL", "nome": "Etanol SFS (Base E27)", "categoria": "Mistura & Flex", "cmd": "217B", "unidade": "%", "rapido": True, "calc": lambda b: round(max(0.0, min(100.0, 27.0 + ((132 - (b1(b) if len(b) >= 2 else b0(b))) * 1.738))), 0) if len(b) >= 1 else 27.0, "sim": lambda t: 27.0},
     {"id": "ETANOL_INST", "nome": "Etanol Real (SFS+Trims)", "categoria": "Mistura & Flex", "cmd": "CALC_HIBRIDO", "unidade": "%", "rapido": True, "calc": lambda b: 27.0, "sim": lambda t: 31.0},
@@ -49,7 +49,6 @@ PIDS_DB = [
     {"id": "KNOCK_CIL2", "nome": "Atraso Knock Cil. 2", "categoria": "Ignicao & Knock", "cmd": "2182", "unidade": "deg", "rapido": False, "calc": lambda b: round(b0(b) * 0.375, 2) if len(b) >= 1 else 0.0, "sim": lambda t: 0.0},
     {"id": "KNOCK_CIL3", "nome": "Atraso Knock Cil. 3", "categoria": "Ignicao & Knock", "cmd": "2183", "unidade": "deg", "rapido": False, "calc": lambda b: round(b0(b) * 0.375, 2) if len(b) >= 1 else 0.0, "sim": lambda t: 0.0},
     {"id": "KNOCK_CIL4", "nome": "Atraso Knock Cil. 4", "categoria": "Ignicao & Knock", "cmd": "2184", "unidade": "deg", "rapido": False, "calc": lambda b: round(b0(b) * 0.375, 2) if len(b) >= 1 else 0.0, "sim": lambda t: 0.0},
-    {"id": "SENSOR_KNOCK_V", "nome": "Sinal Sensor Knock", "categoria": "Ignicao & Knock", "cmd": "2180", "unidade": "mV", "rapido": False, "calc": lambda b: round(b0(b) * 19.6, 0) if len(b) >= 1 else 0.0, "sim": lambda t: round(120 + abs(math.sin(t * 5)) * 80, 0)},
     {"id": "TEMP_AGUA", "nome": "Temperatura Agua (ECT)", "categoria": "Temp & Eletrica", "cmd": "213B", "unidade": "C", "rapido": True, "calc": lambda b: float((b1(b) if len(b) >= 2 else b0(b)) - 40) if len(b) >= 1 else 0.0, "sim": lambda t: 88.0},
     {"id": "TEMP_AR", "nome": "Temperatura Ar (IAT)", "categoria": "Temp & Eletrica", "cmd": "213C", "unidade": "C", "rapido": False, "calc": lambda b: float((b1(b) if len(b) >= 2 else b0(b)) - 40) if len(b) >= 1 else 0.0, "sim": lambda t: 42.0},
     {"id": "BATERIA_V", "nome": "Tensao Bateria", "categoria": "Temp & Eletrica", "cmd": "213E", "unidade": "V", "rapido": True, "calc": lambda b: round((b1(b) if len(b) >= 2 else b0(b)) * 0.0704, 2) if len(b) >= 1 else 0.0, "sim": lambda t: 13.85},
