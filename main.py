@@ -8,7 +8,6 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.button import Button
 from kivy.uix.label import Label
-from kivy.uix.checkbox import CheckBox
 from kivy.uix.widget import Widget
 
 from pids import PIDS_DB
@@ -104,6 +103,22 @@ class TR4MonitorApp(App, TR4EngineMixin):
         self.area_central.clear_widgets()
         self.cards_ui = {}
 
+    def _estilo_btn_pid(self, btn, pid, ativo, com_categoria=False):
+        tag = "[ON]  " if ativo else "[OFF] "
+        prefixo = f"{pid['categoria']} | " if com_categoria else ""
+        btn.text = f"{tag}{prefixo}{pid['nome']} ({pid['cmd']})"
+        btn.background_color = (0.14, 0.52, 0.32, 1) if ativo else (0.18, 0.21, 0.27, 1)
+
+    def _alternar_pid_painel(self, btn, pid):
+        novo = not self.selecionados.get(pid["id"], False)
+        self.selecionados[pid["id"]] = novo
+        self._estilo_btn_pid(btn, pid, novo, True)
+
+    def _alternar_pid_log(self, btn, pid):
+        novo = not self.selecionados_log.get(pid["id"], False)
+        self.selecionados_log[pid["id"]] = novo
+        self._estilo_btn_pid(btn, pid, novo, False)
+
     def mostrar_aba_painel(self, *args):
         self.limpar_area_central()
         scroll = ScrollView()
@@ -138,17 +153,14 @@ class TR4MonitorApp(App, TR4EngineMixin):
         scroll = ScrollView()
         lista = GridLayout(cols=1, spacing=6, size_hint_y=None, padding=(2, 4))
         lista.bind(minimum_height=lista.setter("height"))
-        self.checkboxes_ui = {}
+        self.btns_pid_ui = {}
         for pid in PIDS_DB:
-            linha = BoxLayout(size_hint_y=None, height=58, padding=(6, 4))
-            cb = CheckBox(active=self.selecionados.get(pid["id"], False), size_hint_x=0.14)
-            cb.bind(active=lambda inst, val, pid_id=pid["id"]: self.selecionados.update({pid_id: val}))
-            lbl = Label(text=f"[{pid['categoria']}]\n{pid['nome']} ({pid['cmd']})", font_size="13sp", halign="left", valign="middle", size_hint_x=0.86)
-            lbl.bind(size=lbl.setter("text_size"))
-            linha.add_widget(cb)
-            linha.add_widget(lbl)
-            lista.add_widget(linha)
-            self.checkboxes_ui[pid["id"]] = cb
+            btn = Button(size_hint_y=None, height=54, font_size="12sp", bold=True, background_normal="", halign="left", valign="middle", padding=(12, 0))
+            btn.bind(size=btn.setter("text_size"))
+            self._estilo_btn_pid(btn, pid, self.selecionados.get(pid["id"], False), True)
+            btn.bind(on_release=lambda inst, p=pid: self._alternar_pid_painel(inst, p))
+            lista.add_widget(btn)
+            self.btns_pid_ui[pid["id"]] = (btn, pid)
         scroll.add_widget(lista)
         box.add_widget(scroll)
         self.area_central.add_widget(box)
@@ -157,9 +169,9 @@ class TR4MonitorApp(App, TR4EngineMixin):
         for pid in PIDS_DB:
             estado = True if modo == "TODOS" else (pid["rapido"] if modo == "RAPIDO" else False)
             self.selecionados[pid["id"]] = estado
-            if pid["id"] in self.checkboxes_ui:
-                self.checkboxes_ui[pid["id"]].active = estado
-
+            if pid["id"] in self.btns_pid_ui:
+                btn, p_obj = self.btns_pid_ui[pid["id"]]
+                self._estilo_btn_pid(btn, p_obj, estado, True)
     def mostrar_aba_grafico(self, *args):
         self.limpar_area_central()
         self.graficos_lista = []
@@ -187,10 +199,11 @@ class TR4MonitorApp(App, TR4EngineMixin):
             self.graficos_lista[idx].dados.clear()
         if hasattr(self, "labels_graf_lista") and idx < len(self.labels_graf_lista):
             self.labels_graf_lista[idx].text = f"Canal {idx+1}: {pid_id}"
+
     def mostrar_aba_log(self, *args):
         self.limpar_area_central()
         box = BoxLayout(orientation="vertical", spacing=5, padding=4)
-        self.lbl_log_info = Label(text="Selecione os PIDs para gravar no CSV (pasta Download):", font_size="12sp", size_hint_y=0.08)
+        self.lbl_log_info = Label(text="Toque na barra do sensor para ativar/desativar no CSV:", font_size="12sp", size_hint_y=0.08)
         box.add_widget(self.lbl_log_info)
         botoes = BoxLayout(size_hint_y=0.11, spacing=6)
         b_ini = Button(text="INICIAR LOG", background_normal="", background_color=(0.18, 0.62, 0.34, 1), bold=True, font_size="12sp")
@@ -207,19 +220,16 @@ class TR4MonitorApp(App, TR4EngineMixin):
             acoes.add_widget(b)
         box.add_widget(acoes)
         scroll = ScrollView(size_hint_y=0.72)
-        lista = GridLayout(cols=1, spacing=4, size_hint_y=None, padding=(2, 2))
+        lista = GridLayout(cols=1, spacing=6, size_hint_y=None, padding=(2, 4))
         lista.bind(minimum_height=lista.setter("height"))
-        self.cb_log_ui = {}
+        self.btns_log_ui = {}
         for pid in PIDS_DB:
-            linha = BoxLayout(size_hint_y=None, height=44, padding=(4, 2))
-            cb = CheckBox(active=self.selecionados_log.get(pid["id"], False), size_hint_x=0.14)
-            cb.bind(active=lambda inst, val, pid_id=pid["id"]: self.selecionados_log.update({pid_id: val}))
-            lbl = Label(text=f"{pid['nome']} ({pid['cmd']})", font_size="12sp", halign="left", valign="middle", size_hint_x=0.86)
-            lbl.bind(size=lbl.setter("text_size"))
-            linha.add_widget(cb)
-            linha.add_widget(lbl)
-            lista.add_widget(linha)
-            self.cb_log_ui[pid["id"]] = cb
+            btn = Button(size_hint_y=None, height=50, font_size="12sp", bold=True, background_normal="", halign="left", valign="middle", padding=(12, 0))
+            btn.bind(size=btn.setter("text_size"))
+            self._estilo_btn_pid(btn, pid, self.selecionados_log.get(pid["id"], False), False)
+            btn.bind(on_release=lambda inst, p=pid: self._alternar_pid_log(inst, p))
+            lista.add_widget(btn)
+            self.btns_log_ui[pid["id"]] = (btn, pid)
         scroll.add_widget(lista)
         box.add_widget(scroll)
         self.area_central.add_widget(box)
@@ -228,8 +238,9 @@ class TR4MonitorApp(App, TR4EngineMixin):
         for pid in PIDS_DB:
             estado = True if modo == "TODOS" else (pid["rapido"] if modo == "RAPIDO" else False)
             self.selecionados_log[pid["id"]] = estado
-            if pid["id"] in self.cb_log_ui:
-                self.cb_log_ui[pid["id"]].active = estado
+            if pid["id"] in self.btns_log_ui:
+                btn, p_obj = self.btns_log_ui[pid["id"]]
+                self._estilo_btn_pid(btn, p_obj, estado, False)
 
     def mostrar_aba_engenharia(self, *args):
         self.limpar_area_central()
