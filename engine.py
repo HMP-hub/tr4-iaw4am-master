@@ -4,6 +4,7 @@ import csv
 import time
 import threading
 from datetime import datetime
+from operator import itemgetter
 from kivy.clock import Clock
 from kivy.uix.popup import Popup
 from kivy.uix.boxlayout import BoxLayout
@@ -304,6 +305,15 @@ class TR4EngineMixin:
                 if isinstance(val, (int, float)):
                     graf.adicionar_ponto(val)
 
+    def _obter_pasta_gravacao(self):
+        pasta_dl = "/sdcard/Download"
+        try:
+            if os.path.exists(pasta_dl) and os.access(pasta_dl, os.W_OK):
+                return pasta_dl
+        except Exception:
+            pass
+        return getattr(self, "user_data_dir", ".")
+
     def iniciar_gravacao_log(self, *args):
         if self.gravando_log:
             return
@@ -312,7 +322,7 @@ class TR4EngineMixin:
             self.pids_gravando_lista = [p["id"] for p in PIDS_DB if sel_log.get(p["id"], False)]
             if not self.pids_gravando_lista:
                 self.pids_gravando_lista = [p["id"] for p in PIDS_DB if p["rapido"]]
-            pasta = "/sdcard/Download" if os.path.exists("/sdcard/Download") else "."
+            pasta = self._obter_pasta_gravacao()
             nome_arq = os.path.join(pasta, f"TR4_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
             self.arquivo_log = open(nome_arq, "w", newline="", encoding="utf-8")
             self.writer_log = csv.writer(self.arquivo_log, delimiter=";")
@@ -359,8 +369,9 @@ class TR4EngineMixin:
         b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171"), "2171")
         odo_txt = "N/D"
         if len(b71) >= 3:
-            km_val = (b71 << 16) | (b71 << 8) | b71
-            odo_txt = f"{km_val:,} km (HEX: {b71:02X} {b71:02X} {b71:02X})".replace(",", ".")
+            b_o0, b_o1, b_o2 = itemgetter(0, 1, 2)(b71)
+            km_val = (b_o0 << 16) | (b_o1 << 8) | b_o2
+            odo_txt = f"{km_val:,} km (HEX: {b_o0:02X} {b_o1:02X} {b_o2:02X})".replace(",", ".")
         texto = (
             f"=== IDENTIFICACAO ECU IAW 4AM ===\n"
             f"ID Geral (2180): {_ascii(b80)}\n"
@@ -401,7 +412,7 @@ class TR4EngineMixin:
 
     def iniciar_varredura_ecu(self, *args):
         if self.modo_simulacao:
-            self.lbl_eng.text = "Simulacao Varredura:\n2131: 03 0C (RPM)\n213B: 80 (ECT)\n2147: A2 (STFT)"
+            self.lbl_eng.text = "Simulacao Varredura:\n2131: 03 0C (RPM)\n213B: 80 (ECT)\n2147: 9C (STFT)"
             return
         if not self.bt_out or not self.bt_in:
             self.lbl_eng.text = "Conecte o Bluetooth primeiro!"
@@ -411,7 +422,7 @@ class TR4EngineMixin:
         threading.Thread(target=self._executar_varredura_thread, daemon=True).start()
 
     def _executar_varredura_thread(self):
-        pasta = "/sdcard/Download" if os.path.exists("/sdcard/Download") else "."
+        pasta = self._obter_pasta_gravacao()
         nome_arq = os.path.join(pasta, f"MAPA_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
         encontrados = []
         for code in range(0x00, 0x100):
@@ -424,7 +435,3 @@ class TR4EngineMixin:
             idx = limpo.find(prefixo_ok)
             if idx != -1:
                 dados = limpo[idx + 4:]
-                pares = " ".join(dados[i:i + 2] for i in range(0, len(dados) - 1, 2))
-                encontrados.append(f"{cmd} -> {pares}")
-        with open(nome_arq, "w", encoding="utf-8") as f:
-            f.write(f"MAPA DE PIDS ATIVOS - ECU IAW 4AM ({datetime.now()})\n")
