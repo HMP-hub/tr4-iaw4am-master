@@ -14,7 +14,7 @@ from pids import PIDS_DB
 from engine import TR4EngineMixin
 
 Window.clearcolor = (0.07, 0.08, 0.10, 1)
-LOG_RAPIDO_IDS = {"RPM", "MAP_KPA", "TPS_PCT", "STFT", "SENSOR_KNOCK_V", "SONDA_PRE", "TI_PRINCIPAL", "AVANCO_IGN"}
+LOG_RAPIDO_IDS = {"RPM", "MAP_KPA", "TPS_PCT", "STFT", "KNOCK_CIL1", "SONDA_PRE", "TI_PRINCIPAL", "AVANCO_IGN"}
 
 
 class GraficoTempoReal(Widget):
