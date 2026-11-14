@@ -4,6 +4,7 @@ import csv
 import time
 import threading
 from datetime import datetime
+from operator import itemgetter
 from kivy.clock import Clock
 from kivy.uix.popup import Popup
 from kivy.uix.boxlayout import BoxLayout
@@ -117,7 +118,7 @@ class TR4EngineMixin:
             self.bt_in = None
             self.bt_out = None
             Clock.schedule_once(lambda dt, err=str(e): self._atualizar_status(f"FALHA SOCKET BT: {err[:34]}", (1.0, 0.35, 0.35, 1)))
-            def conectar_ecu(self, *args):
+    def conectar_ecu(self, *args):
         if self.rodando and not self.modo_simulacao:
             self.lbl_status.text = "ECU IAW 4AM JA CONECTADA"
             return
@@ -201,30 +202,24 @@ class TR4EngineMixin:
     def enviar_comando_raw(self, cmd, timeout=1.5):
         if not self.bt_out or not self.bt_in:
             return ""
-        lock = getattr(self, "bt_lock", None)
-        if lock:
-            lock.acquire()
-        try:
-            self._limpar_buffer_bt()
-            self.bt_out.write((cmd + "\r").encode("ascii"))
-            self.bt_out.flush()
-            resposta = bytearray()
-            t_limite = time.time() + timeout
-            while time.time() < t_limite:
-                if self.bt_in.available() > 0:
-                    b = self.bt_in.read()
-                    if b == 62:
-                        break
-                    resposta.append(b)
-                else:
-                    time.sleep(0.01)
-            return resposta.decode("ascii", errors="ignore").replace("\r", " ").replace("\n", " ").strip()
-        except Exception:
-            return ""
-        finally:
-            if lock:
-                lock.release()
-
+        with self.bt_lock:
+            try:
+                self._limpar_buffer_bt()
+                self.bt_out.write((cmd + "\r").encode("ascii"))
+                self.bt_out.flush()
+                resposta = bytearray()
+                t_limite = time.time() + timeout
+                while time.time() < t_limite:
+                    if self.bt_in.available() > 0:
+                        b = self.bt_in.read()
+                        if b == 62:
+                            break
+                        resposta.append(b)
+                    else:
+                        time.sleep(0.01)
+                return resposta.decode("ascii", errors="ignore").replace("\r", " ").replace("\n", " ").strip()
+            except Exception:
+                return ""
     def parse_bytes_kwp(self, resp_str, cmd_enviado):
         limpo = "".join(c for c in resp_str.upper() if c in "0123456789ABCDEF")
         prefixo_ok = "61" + cmd_enviado[2:4].upper()
@@ -309,7 +304,8 @@ class TR4EngineMixin:
                 val = self.valores_atuais.get(self.pids_graf[idx])
                 if isinstance(val, (int, float)):
                     graf.adicionar_ponto(val)
-                    def _obter_pasta_gravacao(self):
+
+    def _obter_pasta_gravacao(self):
         pasta_dl = "/sdcard/Download"
         try:
             if os.path.exists(pasta_dl) and os.access(pasta_dl, os.W_OK):
@@ -354,7 +350,6 @@ class TR4EngineMixin:
             self.writer_log = None
         if hasattr(self, "lbl_log_info"):
             self.lbl_log_info.text = "Log salvo e fechado com sucesso."
-
     def ler_info_ecu(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = "Modelo ECU: IAW4AMHWM44\n\nCalibracao: 0401BA83\n\nSoftware: 4AMMS\n\nOdometro Real ECU: 69.456 km"
@@ -376,7 +371,8 @@ class TR4EngineMixin:
         b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171", timeout=1.5), "2171")
         odo_txt = "Nao disponivel"
         if len(b71) >= 3:
-            km_val = (b71[0] << 16) | (b71[1] << 8) | b71[2]
+            b_o0, b_o1, b_o2 = itemgetter(0, 1, 2)(b71)
+            km_val = (b_o0 << 16) | (b_o1 << 8) | b_o2
             odo_txt = f"{km_val:,} km".replace(",", ".")
         texto = (
             f"Modelo ECU: {_ascii(b92) or 'N/D'}\n\n"
@@ -415,8 +411,8 @@ class TR4EngineMixin:
                 prefixos = {"0": "P0", "1": "P1", "2": "P2", "3": "P3", "4": "C0", "8": "B0", "C": "U0"}
                 for i in range(0, len(dados) - 5, 6):
                     dtc_hex = dados[i:i + 4]
-                    p_letra = prefixos.get(dtc_hex[0], "P" + dtc_hex[0])
-                    cods.append(f"{p_letra}{dtc_hex[1:]}")
+                    p_letra = prefixos.get(dtc_hex[:1], "P" + dtc_hex[:1])
+                    cods.append(f"{p_letra}{dtc_hex[1:4]}")
                 msg = f"Falhas encontradas ({qtd}):\n\n" + (", ".join(cods) if cods else dados)
         else:
             msg = f"Retorno da ECU:\n{resp if resp else 'Sem resposta'}"
