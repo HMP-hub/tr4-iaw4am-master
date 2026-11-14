@@ -1,16 +1,6 @@
 # coding: utf-8
-import os
-import csv
-import time
-import math
-import random
-import threading
 import traceback
-from datetime import datetime
-from operator import itemgetter
-
 from kivy.app import App
-from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.graphics import Color, Rectangle, Line
 from kivy.uix.boxlayout import BoxLayout
@@ -21,64 +11,10 @@ from kivy.uix.label import Label
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.widget import Widget
 
+from pids import PIDS_DB
+from engine import TR4EngineMixin
+
 Window.clearcolor = (0.07, 0.08, 0.10, 1)
-b0 = itemgetter(0)
-b1 = itemgetter(1)
-
-
-def decode_malha_completa(bytes_a5):
-    if len(bytes_a5) < 7:
-        return "SEM DADOS"
-    d = bytes_a5.pop(3)
-    g = bytes_a5.pop(5)
-    if d == 0:
-        return "EMERGENCIA"
-    if d == 1 and g == 1:
-        return "CL - LENTA"
-    if d == 1 and g == 0:
-        return "CL - CRUZEIRO"
-    if d == 2 and g == 2:
-        return "OL - WOT"
-    if d == 2 and g == 1:
-        return "OL - CUTOFF/FRIO"
-    return f"OL - TRANS ({d}/{g})"
-
-
-PIDS_DB = [
-    {"id": "STATUS_MALHA", "nome": "Status Malha Completo", "categoria": "Mistura & Flex", "cmd": "21A5", "unidade": "State", "rapido": True, "calc": lambda b: decode_malha_completa(list(b)), "sim": lambda t: random.choice(["CL - LENTA", "CL - CRUZEIRO", "OL - WOT", "OL - CUTOFF/FRIO"])},
-    {"id": "STFT", "nome": "STFT (Integrador Lambda)", "categoria": "Mistura & Flex", "cmd": "2147", "unidade": "%", "rapido": True, "calc": lambda b: round(((b0(b) - 160) / 160.0) * 100.0, 1) if len(b) >= 1 else 0.0, "sim": lambda t: round(math.sin(t * 2.5) * 6.5 + 2.0, 1)},
-    {"id": "LTFT", "nome": "LTFT (Auto-Adaptativo)", "categoria": "Mistura & Flex", "cmd": "2179", "unidade": "%", "rapido": True, "calc": lambda b: round(((b0(b) - 160) / 160.0) * 100.0, 1) if len(b) >= 1 else 0.0, "sim": lambda t: 3.8},
-    {"id": "AFR_ALVO", "nome": "AFR Alvo (Mapa SFS)", "categoria": "Mistura & Flex", "cmd": "217B", "unidade": "AFR", "rapido": True, "calc": lambda b: round((b1(b) if len(b) >= 2 else b0(b)) / 10.0, 1) if len(b) >= 1 else 13.2, "sim": lambda t: 13.2},
-    {"id": "ETANOL_REAL", "nome": "Etanol SFS (Base E27)", "categoria": "Mistura & Flex", "cmd": "217B", "unidade": "%", "rapido": True, "calc": lambda b: round(max(0.0, min(100.0, 27.0 + ((132 - (b1(b) if len(b) >= 2 else b0(b))) * 1.738))), 0) if len(b) >= 1 else 27.0, "sim": lambda t: 27.0},
-    {"id": "ETANOL_INST", "nome": "Etanol Real (SFS+Trims)", "categoria": "Mistura & Flex", "cmd": "CALC_HIBRIDO", "unidade": "%", "rapido": True, "calc": lambda b: 27.0, "sim": lambda t: 31.0},
-    {"id": "SONDA_PRE", "nome": "Sonda Lambda Pre-Cat", "categoria": "Mistura & Flex", "cmd": "2141", "unidade": "mV", "rapido": True, "calc": lambda b: round(((b1(b) if len(b) >= 2 else b0(b)) * 4.88), 0) if len(b) >= 1 else 0.0, "sim": lambda t: round(450 + math.sin(t * 4.0) * 380, 0)},
-    {"id": "SONDA_POS", "nome": "Sonda Lambda Pos-Cat", "categoria": "Mistura & Flex", "cmd": "2142", "unidade": "mV", "rapido": False, "calc": lambda b: round(((b1(b) if len(b) >= 2 else b0(b)) * 4.88), 0) if len(b) >= 1 else 0.0, "sim": lambda t: 680.0},
-    {"id": "REGIME_CARGA", "nome": "Regime Pedal (0/1/2)", "categoria": "Mistura & Flex", "cmd": "215C", "unidade": "Code", "rapido": False, "calc": lambda b: float(b0(b)) if len(b) >= 1 else 0.0, "sim": lambda t: 1.0},
-    {"id": "RPM", "nome": "Rotacao Motor (RPM)", "categoria": "Motor & Injecao", "cmd": "2131", "unidade": "rpm", "rapido": True, "calc": lambda b: float((b0(b) * 256) + b1(b)) if len(b) >= 2 else 0.0, "sim": lambda t: round(780 + math.sin(t) * 35, 0)},
-    {"id": "TI_PRINCIPAL", "nome": "Tempo Injecao Efetivo", "categoria": "Motor & Injecao", "cmd": "2145", "unidade": "ms", "rapido": True, "calc": lambda b: round(((b0(b) * 256) + b1(b)) * 0.004, 2) if len(b) >= 2 else 0.0, "sim": lambda t: round(3.25 + math.sin(t * 2) * 0.25, 2)},
-    {"id": "MAP_KPA", "nome": "Pressao Coletor (MAP)", "categoria": "Motor & Injecao", "cmd": "2135", "unidade": "kPa", "rapido": True, "calc": lambda b: round(((b0(b) * 256) + b1(b)) * 0.1, 1) if len(b) >= 2 else (float(b0(b)) if len(b) == 1 else 0.0), "sim": lambda t: round(34.0 + math.sin(t * 1.5) * 2.0, 1)},
-    {"id": "PRESSAO_BARO", "nome": "Pressao Barometrica", "categoria": "Motor & Injecao", "cmd": "2136", "unidade": "kPa", "rapido": False, "calc": lambda b: round(((b0(b) * 256) + b1(b)) * 0.1, 1) if len(b) >= 2 else (float(b0(b)) if len(b) == 1 else 0.0), "sim": lambda t: 99.5},
-    {"id": "CARGA_MOTOR", "nome": "Carga Calculada Motor", "categoria": "Motor & Injecao", "cmd": "2138", "unidade": "%", "rapido": False, "calc": lambda b: round((b0(b) / 255.0) * 100.0, 1) if len(b) >= 1 else 0.0, "sim": lambda t: 22.4},
-    {"id": "TI_CIL1", "nome": "Tempo Injecao Cil. 1", "categoria": "Motor & Injecao", "cmd": "2161", "unidade": "ms", "rapido": False, "calc": lambda b: round(((b0(b) * 256) + b1(b)) * 0.004, 2) if len(b) >= 2 else 0.0, "sim": lambda t: 3.24},
-    {"id": "TI_CIL2", "nome": "Tempo Injecao Cil. 2", "categoria": "Motor & Injecao", "cmd": "2162", "unidade": "ms", "rapido": False, "calc": lambda b: round(((b0(b) * 256) + b1(b)) * 0.004, 2) if len(b) >= 2 else 0.0, "sim": lambda t: 3.26},
-    {"id": "TI_CIL3", "nome": "Tempo Injecao Cil. 3", "categoria": "Motor & Injecao", "cmd": "2163", "unidade": "ms", "rapido": False, "calc": lambda b: round(((b0(b) * 256) + b1(b)) * 0.004, 2) if len(b) >= 2 else 0.0, "sim": lambda t: 3.25},
-    {"id": "TI_CIL4", "nome": "Tempo Injecao Cil. 4", "categoria": "Motor & Injecao", "cmd": "2164", "unidade": "ms", "rapido": False, "calc": lambda b: round(((b0(b) * 256) + b1(b)) * 0.004, 2) if len(b) >= 2 else 0.0, "sim": lambda t: 3.23},
-    {"id": "AVANCO_IGN", "nome": "Avanco Ignicao Final", "categoria": "Ignicao & Knock", "cmd": "2149", "unidade": "deg", "rapido": True, "calc": lambda b: round((b0(b) - 128) * 0.5, 1) if len(b) >= 1 else 0.0, "sim": lambda t: round(10.5 + math.sin(t) * 2.0, 1)},
-    {"id": "KNOCK_CIL1", "nome": "Atraso Knock Cil. 1", "categoria": "Ignicao & Knock", "cmd": "2181", "unidade": "deg", "rapido": False, "calc": lambda b: round(b0(b) * 0.375, 2) if len(b) >= 1 else 0.0, "sim": lambda t: 0.0},
-    {"id": "KNOCK_CIL2", "nome": "Atraso Knock Cil. 2", "categoria": "Ignicao & Knock", "cmd": "2182", "unidade": "deg", "rapido": False, "calc": lambda b: round(b0(b) * 0.375, 2) if len(b) >= 1 else 0.0, "sim": lambda t: 0.0},
-    {"id": "KNOCK_CIL3", "nome": "Atraso Knock Cil. 3", "categoria": "Ignicao & Knock", "cmd": "2183", "unidade": "deg", "rapido": False, "calc": lambda b: round(b0(b) * 0.375, 2) if len(b) >= 1 else 0.0, "sim": lambda t: 0.0},
-    {"id": "KNOCK_CIL4", "nome": "Atraso Knock Cil. 4", "categoria": "Ignicao & Knock", "cmd": "2184", "unidade": "deg", "rapido": False, "calc": lambda b: round(b0(b) * 0.375, 2) if len(b) >= 1 else 0.0, "sim": lambda t: 0.0},
-    {"id": "SENSOR_KNOCK_V", "nome": "Sinal Sensor Knock", "categoria": "Ignicao & Knock", "cmd": "2180", "unidade": "mV", "rapido": False, "calc": lambda b: round(b0(b) * 19.6, 0) if len(b) >= 1 else 0.0, "sim": lambda t: round(120 + abs(math.sin(t * 5)) * 80, 0)},
-    {"id": "TEMP_AGUA", "nome": "Temperatura Agua (ECT)", "categoria": "Temp & Eletrica", "cmd": "213B", "unidade": "C", "rapido": True, "calc": lambda b: float((b1(b) if len(b) >= 2 else b0(b)) - 40) if len(b) >= 1 else 0.0, "sim": lambda t: 88.0},
-    {"id": "TEMP_AR", "nome": "Temperatura Ar (IAT)", "categoria": "Temp & Eletrica", "cmd": "213C", "unidade": "C", "rapido": False, "calc": lambda b: float((b1(b) if len(b) >= 2 else b0(b)) - 40) if len(b) >= 1 else 0.0, "sim": lambda t: 42.0},
-    {"id": "BATERIA_V", "nome": "Tensao Bateria", "categoria": "Temp & Eletrica", "cmd": "213E", "unidade": "V", "rapido": True, "calc": lambda b: round((b1(b) if len(b) >= 2 else b0(b)) * 0.0704, 2) if len(b) >= 1 else 0.0, "sim": lambda t: 13.85},
-    {"id": "TPS_PCT", "nome": "Posicao Borboleta (TPS)", "categoria": "Cambio & Atuadores", "cmd": "2133", "unidade": "%", "rapido": False, "calc": lambda b: round(((b1(b) if len(b) >= 2 else b0(b)) / 255.0) * 100.0, 1) if len(b) >= 1 else 0.0, "sim": lambda t: 12.5},
-    {"id": "VELOCIDADE", "nome": "Velocidade Veiculo", "categoria": "Cambio & Atuadores", "cmd": "2132", "unidade": "km/h", "rapido": False, "calc": lambda b: float(b1(b) if len(b) >= 2 else b0(b)) if len(b) >= 1 else 0.0, "sim": lambda t: 0.0},
-    {"id": "CAMBIO_NEUTRO", "nome": "Status Cambio (N/Eng)", "categoria": "Cambio & Atuadores", "cmd": "215A", "unidade": "State", "rapido": False, "calc": lambda b: "NEUTRO / P" if (len(b) >= 1 and (b0(b) & 0x01)) else "ENGATADO", "sim": lambda t: "NEUTRO / P"},
-    {"id": "VENTOINHA_STATUS", "nome": "Eletroventilador", "categoria": "Cambio & Atuadores", "cmd": "215E", "unidade": "State", "rapido": False, "calc": lambda b: "DESLIGADA" if (len(b) == 0 or b0(b) == 0) else ("ALTA VEL." if b0(b) >= 2 else "BAIXA VEL."), "sim": lambda t: "DESLIGADA"},
-    {"id": "AC_STATUS", "nome": "Compressor A/C", "categoria": "Cambio & Atuadores", "cmd": "215F", "unidade": "State", "rapido": False, "calc": lambda b: "LIGADO" if (len(b) >= 1 and b0(b) > 0) else "DESLIGADO", "sim": lambda t: "DESLIGADO"},
-    {"id": "CANISTER_EVAP", "nome": "Valvula Canister (EVAP)", "categoria": "Cambio & Atuadores", "cmd": "214E", "unidade": "%", "rapido": False, "calc": lambda b: round((b0(b) / 255.0) * 100.0, 1) if len(b) >= 1 else 0.0, "sim": lambda t: 18.0},
-]
 
 
 class GraficoTempoReal(Widget):
@@ -95,3 +31,199 @@ class GraficoTempoReal(Widget):
             self.redesenhar()
 
     def redesenhar(self, *args):
+        self.canvas.clear()
+        with self.canvas:
+            Color(0.11, 0.13, 0.17, 1)
+            Rectangle(pos=self.pos, size=self.size)
+            Color(0.22, 0.25, 0.30, 1)
+            meio_y = self.y + self.height / 2.0
+            Line(points=[self.x, meio_y, self.x + self.width, meio_y], width=1)
+            if len(self.dados) < 2:
+                return
+            v_min, v_max = min(self.dados), max(self.dados)
+            amplitude = (v_max - v_min) if (v_max - v_min) > 0.1 else 1.0
+            pontos = []
+            passo_x = self.width / float(max(1, len(self.dados) - 1))
+            for i, val in enumerate(self.dados):
+                px = self.x + i * passo_x
+                norm_y = (val - v_min) / amplitude
+                py = self.y + 10 + norm_y * (self.height - 20)
+                pontos.extend([px, py])
+            Color(0.10, 0.85, 0.45, 1)
+            Line(points=pontos, width=2.2)
+
+
+class TR4MonitorApp(App, TR4EngineMixin):
+    def build(self):
+        self.title = "TR4 IAW4AM Master"
+        self.rodando = False
+        self.modo_simulacao = False
+        self.bt_socket = None
+        self.bt_in = None
+        self.bt_out = None
+        self.selecionados = {p["id"]: p["rapido"] for p in PIDS_DB}
+        self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
+        self.gravando_log = False
+        self.arquivo_log = None
+        self.writer_log = None
+        self.inicio_log_ts = 0.0
+        self.pid_grafico_id = "STFT"
+        self.cards_ui = {}
+
+        root = BoxLayout(orientation="vertical", padding=6, spacing=5)
+        self.lbl_status = Label(text="DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)", bold=True, font_size="13sp", color=(1, 0.78, 0.2, 1), size_hint_y=0.05)
+        root.add_widget(self.lbl_status)
+
+        top_bar = BoxLayout(size_hint_y=0.08, spacing=6)
+        btn_bt = Button(text="CONECTAR MX+", font_size="12sp", background_color=(0.1, 0.55, 0.85, 1), bold=True)
+        btn_bt.bind(on_release=self.iniciar_bluetooth)
+        btn_sim = Button(text="SIMULACAO", font_size="12sp", background_color=(0.25, 0.65, 0.35, 1), bold=True)
+        btn_sim.bind(on_release=self.iniciar_simulacao)
+        btn_stop = Button(text="PARAR", font_size="12sp", background_color=(0.8, 0.25, 0.25, 1), bold=True)
+        btn_stop.bind(on_release=self.parar_conexao)
+        top_bar.add_widget(btn_bt)
+        top_bar.add_widget(btn_sim)
+        top_bar.add_widget(btn_stop)
+        root.add_widget(top_bar)
+
+        nav_bar = BoxLayout(size_hint_y=0.07, spacing=4)
+        for nome_aba, fn in [("PAINEL", self.mostrar_aba_painel), ("PIDS", self.mostrar_aba_seletor), ("GRAFICO", self.mostrar_aba_grafico), ("LOG CSV", self.mostrar_aba_log), ("ENG/DTC", self.mostrar_aba_engenharia)]:
+            b = Button(text=nome_aba, font_size="11sp", bold=True, background_color=(0.18, 0.22, 0.28, 1))
+            b.bind(on_release=fn)
+            nav_bar.add_widget(b)
+        root.add_widget(nav_bar)
+
+        self.area_central = BoxLayout(orientation="vertical", size_hint_y=0.80)
+        root.add_widget(self.area_central)
+        self.mostrar_aba_painel()
+        return root
+
+    def limpar_area_central(self):
+        self.area_central.clear_widgets()
+        self.cards_ui = {}
+
+    def mostrar_aba_painel(self, *args):
+        self.limpar_area_central()
+        scroll = ScrollView()
+        grid = GridLayout(cols=2, spacing=6, size_hint_y=None, padding=(2, 4))
+        grid.bind(minimum_height=grid.setter("height"))
+        for pid in PIDS_DB:
+            if not self.selecionados.get(pid["id"], False):
+                continue
+            card = BoxLayout(orientation="vertical", size_hint_y=None, height=82, padding=6)
+            with card.canvas.before:
+                Color(0.13, 0.16, 0.21, 1)
+                rect = Rectangle(pos=card.pos, size=card.size)
+            card.bind(pos=lambda inst, v, r=rect: setattr(r, "pos", v), size=lambda inst, v, r=rect: setattr(r, "size", v))
+            lbl_nome = Label(text=pid["nome"], font_size="11sp", color=(0.75, 0.80, 0.88, 1), size_hint_y=0.35)
+            lbl_val = Label(text=f"{self.valores_atuais.get(pid['id'], '--')} {pid['unidade']}", font_size="17sp", bold=True, color=(0.15, 0.90, 0.50, 1), size_hint_y=0.65)
+            card.add_widget(lbl_nome)
+            card.add_widget(lbl_val)
+            grid.add_widget(card)
+            self.cards_ui[pid["id"]] = (lbl_val, pid["unidade"])
+        scroll.add_widget(grid)
+        self.area_central.add_widget(scroll)
+
+    def mostrar_aba_seletor(self, *args):
+        self.limpar_area_central()
+        box = BoxLayout(orientation="vertical", spacing=6)
+        acoes = BoxLayout(size_hint_y=0.10, spacing=5)
+        for texto, modo, cor in [("MARCAR TODOS", "TODOS", (0.15, 0.55, 0.80, 1)), ("PERFIL RAPIDO", "RAPIDO", (0.20, 0.65, 0.40, 1)), ("DESMARCAR", "NENHUM", (0.65, 0.25, 0.25, 1))]:
+            b = Button(text=texto, font_size="11sp", background_color=cor, bold=True)
+            b.bind(on_release=lambda x, m=modo: self.definir_todos_pids(m))
+            acoes.add_widget(b)
+        box.add_widget(acoes)
+        scroll = ScrollView()
+        lista = GridLayout(cols=1, spacing=6, size_hint_y=None, padding=(2, 4))
+        lista.bind(minimum_height=lista.setter("height"))
+        self.checkboxes_ui = {}
+        for pid in PIDS_DB:
+            linha = BoxLayout(size_hint_y=None, height=58, padding=(6, 4))
+            cb = CheckBox(active=self.selecionados.get(pid["id"], False), size_hint_x=0.14)
+            cb.bind(active=lambda inst, val, pid_id=pid["id"]: self.selecionados.update({pid_id: val}))
+            lbl = Label(text=f"[{pid['categoria']}]\n{pid['nome']} ({pid['cmd']})", font_size="13sp", halign="left", valign="middle", size_hint_x=0.86)
+            lbl.bind(size=lbl.setter("text_size"))
+            linha.add_widget(cb)
+            linha.add_widget(lbl)
+            lista.add_widget(linha)
+            self.checkboxes_ui[pid["id"]] = cb
+        scroll.add_widget(lista)
+        box.add_widget(scroll)
+        self.area_central.add_widget(box)
+
+    def definir_todos_pids(self, modo):
+        for pid in PIDS_DB:
+            estado = True if modo == "TODOS" else (pid["rapido"] if modo == "RAPIDO" else False)
+            self.selecionados[pid["id"]] = estado
+            if pid["id"] in self.checkboxes_ui:
+                self.checkboxes_ui[pid["id"]].active = estado
+
+    def mostrar_aba_grafico(self, *args):
+        self.limpar_area_central()
+        box = BoxLayout(orientation="vertical", spacing=6)
+        topo = BoxLayout(size_hint_y=0.12, spacing=4)
+        for pid_id in ["STFT", "RPM", "SONDA_PRE", "TI_PRINCIPAL", "AVANCO_IGN"]:
+            b = Button(text=pid_id, font_size="11sp", bold=True)
+            b.bind(on_release=lambda x, p=pid_id: self.mudar_pid_grafico(p))
+            topo.add_widget(b)
+        box.add_widget(topo)
+        self.lbl_titulo_graf = Label(text=f"Grafico Ao Vivo: {self.pid_grafico_id}", size_hint_y=0.08, bold=True)
+        box.add_widget(self.lbl_titulo_graf)
+        self.grafico_widget = GraficoTempoReal(size_hint_y=0.80)
+        box.add_widget(self.grafico_widget)
+        self.area_central.add_widget(box)
+
+    def mudar_pid_grafico(self, pid_id):
+        self.pid_grafico_id = pid_id
+        if hasattr(self, "grafico_widget"):
+            self.grafico_widget.dados.clear()
+        if hasattr(self, "lbl_titulo_graf"):
+            self.lbl_titulo_graf.text = f"Grafico Ao Vivo: {pid_id}"
+
+    def mostrar_aba_log(self, *args):
+        self.limpar_area_central()
+        box = BoxLayout(orientation="vertical", spacing=10, padding=10)
+        self.lbl_log_info = Label(text="Gravacao de Telemetria CSV\nSalva na pasta Download", font_size="14sp", size_hint_y=0.45)
+        box.add_widget(self.lbl_log_info)
+        botoes = BoxLayout(size_hint_y=0.20, spacing=8)
+        b_ini = Button(text="INICIAR LOG", background_color=(0.15, 0.65, 0.35, 1), bold=True)
+        b_ini.bind(on_release=self.iniciar_gravacao_log)
+        b_parar = Button(text="FECHAR LOG", background_color=(0.8, 0.25, 0.25, 1), bold=True)
+        b_parar.bind(on_release=self.parar_gravacao_log)
+        botoes.add_widget(b_ini)
+        botoes.add_widget(b_parar)
+        box.add_widget(botoes)
+        self.area_central.add_widget(box)
+
+    def mostrar_aba_engenharia(self, *args):
+        self.limpar_area_central()
+        box = BoxLayout(orientation="vertical", spacing=8, padding=8)
+        self.lbl_eng = Label(text="Modulo de Engenharia IAW 4AM.AR (SW 4AMMS)\nSessao Estendida KWP2000 (10 81)", size_hint_y=0.55)
+        box.add_widget(self.lbl_eng)
+        botoes = BoxLayout(size_hint_y=0.25, spacing=8)
+        b_dtc = Button(text="LER FALHAS (DTC)", background_color=(0.2, 0.5, 0.8, 1), bold=True)
+        b_dtc.bind(on_release=self.ler_dtcs)
+        b_clear = Button(text="APAGAR FALHAS", background_color=(0.8, 0.4, 0.1, 1), bold=True)
+        b_clear.bind(on_release=self.apagar_dtcs)
+        botoes.add_widget(b_dtc)
+        botoes.add_widget(b_clear)
+        box.add_widget(botoes)
+        self.area_central.add_widget(box)
+
+
+class TelaErroApp(App):
+    def __init__(self, msg_erro, **kwargs):
+        super().__init__(**kwargs)
+        self.msg_erro = msg_erro
+
+    def build(self):
+        lbl = Label(text=self.msg_erro, font_size="12sp", halign="left", valign="top")
+        lbl.bind(size=lbl.setter("text_size"))
+        return lbl
+
+
+if __name__ == "__main__":
+    try:
+        TR4MonitorApp().run()
+    except Exception:
+        TelaErroApp(traceback.format_exc()).run()
