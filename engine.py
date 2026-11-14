@@ -222,3 +222,145 @@ class TR4EngineMixin:
                     pass
             Clock.schedule_once(self.atualizar_interface)
             time.sleep(0.12 if self.modo_simulacao else 0.04)
+    def atualizar_interface(self, dt):
+        for pid_id, widgets in self.cards_ui.items():
+            lbl_val, lbl_mm, unidade = widgets
+            val = self.valores_atuais.get(pid_id, "--")
+            lbl_val.text = f"{val} {unidade}"
+            vmin = self.valores_min.get(pid_id, "--")
+            vmax = self.valores_max.get(pid_id, "--")
+            lbl_mm.text = f"MIN: {vmin}   |   MAX: {vmax}"
+        if hasattr(self, "graficos_lista") and hasattr(self, "pids_graf"):
+            for idx, graf in enumerate(self.graficos_lista):
+                val = self.valores_atuais.get(self.pids_graf[idx])
+                if isinstance(val, (int, float)):
+                    graf.adicionar_ponto(val)
+
+    def iniciar_gravacao_log(self, *args):
+        if self.gravando_log:
+            return
+        try:
+            sel_log = getattr(self, "selecionados_log", {})
+            self.pids_gravando_lista = [p["id"] for p in PIDS_DB if sel_log.get(p["id"], False)]
+            if not self.pids_gravando_lista:
+                self.pids_gravando_lista = [p["id"] for p in PIDS_DB if p["rapido"]]
+            pasta = "/sdcard/Download" if os.path.exists("/sdcard/Download") else "."
+            nome_arq = os.path.join(pasta, f"TR4_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+            self.arquivo_log = open(nome_arq, "w", newline="", encoding="utf-8")
+            self.writer_log = csv.writer(self.arquivo_log, delimiter=";")
+            self.writer_log.writerow(["Tempo_s"] + self.pids_gravando_lista)
+            self.inicio_log_ts = time.time()
+            self.gravando_log = True
+            if hasattr(self, "lbl_log_info"):
+                self.lbl_log_info.text = f"GRAVANDO ({len(self.pids_gravando_lista)} PIDs):\n{nome_arq}"
+        except Exception as e:
+            if hasattr(self, "lbl_log_info"):
+                self.lbl_log_info.text = f"Erro ao criar CSV: {e}"
+
+    def parar_gravacao_log(self, *args):
+        self.gravando_log = False
+        if self.arquivo_log:
+            try:
+                self.arquivo_log.close()
+            except Exception:
+                pass
+            self.arquivo_log = None
+            self.writer_log = None
+        if hasattr(self, "lbl_log_info"):
+            self.lbl_log_info.text = "Log salvo e fechado com sucesso."
+
+    def ler_info_ecu(self, *args):
+        if self.modo_simulacao:
+            self.lbl_eng.text = "INFO ECU (SIMULACAO):\nModelo: IAW4AMS4 (4AM.AR)\nOdometro ECU: 69.412 km\nHardware/SW: 4AMMS"
+            return
+        if not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "Conecte o Bluetooth primeiro!"
+            return
+        estava_rodando = self.rodando
+        self.rodando = False
+        time.sleep(0.15)
+        threading.Thread(target=self._ler_info_ecu_thread, args=(estava_rodando,), daemon=True).start()
+
+    def _ler_info_ecu_thread(self, retomar):
+        def _ascii(b_list):
+            return "".join(chr(x) if 32 <= x <= 126 else "" for x in b_list).strip()
+        b80 = self.parse_bytes_kwp(self.enviar_comando_raw("2180"), "2180")
+        b92 = self.parse_bytes_kwp(self.enviar_comando_raw("2192"), "2192")
+        b94 = self.parse_bytes_kwp(self.enviar_comando_raw("2194"), "2194")
+        b96 = self.parse_bytes_kwp(self.enviar_comando_raw("2196"), "2196")
+        b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171"), "2171")
+        odo_txt = "N/D"
+        if len(b71) >= 3:
+            km_val = (b71 << 16) | (b71 << 8) | b71
+            odo_txt = f"{km_val:,} km (HEX: {b71:02X} {b71:02X} {b71:02X})".replace(",", ".")
+        texto = (
+            f"=== IDENTIFICACAO ECU IAW 4AM ===\n"
+            f"ID Geral (2180): {_ascii(b80)}\n"
+            f"Modelo/SW (2192): {_ascii(b92)}\n"
+            f"Serie/Calib (2194): {_ascii(b94)}\n"
+            f"Codigo ECU (2196): {_ascii(b96)}\n"
+            f"Odometro Real ECU (2171): {odo_txt}"
+        )
+        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", texto))
+        if retomar:
+            self.rodando = True
+            self.loop_leitura()
+
+    def ler_dtcs(self, *args):
+        if self.modo_simulacao:
+            self.lbl_eng.text = "Simulacao DTC:\nNenhuma falha ativa (P0000)"
+            return
+        resp = self.enviar_comando_raw("1800FF00")
+        self.lbl_eng.text = f"Resposta DTC ECU (18 00 FF 00):\n{resp if resp else 'Sem resposta'}"
+
+    def apagar_dtcs(self, *args):
+        if self.modo_simulacao:
+            self.lbl_eng.text = "Simulacao DTC:\nMemoria de falhas limpa!"
+            return
+        resp = self.enviar_comando_raw("14FF00")
+        self.lbl_eng.text = f"Apagar Falhas (14 FF 00):\n{resp if resp else 'Comando enviado'}"
+
+    def desconectar_ecu(self, *args):
+        self.rodando = False
+        self.modo_simulacao = False
+        self.parar_gravacao_log()
+        if self.bt_socket:
+            self.lbl_status.text = "ECU DESCONECTADA | BLUETOOTH ATIVO"
+            self.lbl_status.color = (0.3, 0.85, 1.0, 1)
+        else:
+            self.lbl_status.text = "DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)"
+            self.lbl_status.color = (1, 0.78, 0.2, 1)
+
+    def iniciar_varredura_ecu(self, *args):
+        if self.modo_simulacao:
+            self.lbl_eng.text = "Simulacao Varredura:\n2131: 03 0C (RPM)\n213B: 80 (ECT)\n2147: A2 (STFT)"
+            return
+        if not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "Conecte o Bluetooth primeiro!"
+            return
+        self.rodando = False
+        time.sleep(0.15)
+        threading.Thread(target=self._executar_varredura_thread, daemon=True).start()
+
+    def _executar_varredura_thread(self):
+        pasta = "/sdcard/Download" if os.path.exists("/sdcard/Download") else "."
+        nome_arq = os.path.join(pasta, f"MAPA_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+        encontrados = []
+        for code in range(0x00, 0x100):
+            cmd = f"21{code:02X}"
+            if code % 16 == 0:
+                Clock.schedule_once(lambda dt, c=cmd, n=len(encontrados): setattr(self.lbl_eng, "text", f"Varrendo {c} / 21FF...\nAtivos encontrados: {n}"))
+            resp = self.enviar_comando_raw(cmd)
+            limpo = "".join(c for c in resp.upper() if c in "0123456789ABCDEF")
+            prefixo_ok = f"61{code:02X}"
+            idx = limpo.find(prefixo_ok)
+            if idx != -1:
+                dados = limpo[idx + 4:]
+                pares = " ".join(dados[i:i + 2] for i in range(0, len(dados) - 1, 2))
+                encontrados.append(f"{cmd} -> {pares}")
+        with open(nome_arq, "w", encoding="utf-8") as f:
+            f.write(f"MAPA DE PIDS ATIVOS - ECU IAW 4AM ({datetime.now()})\n")
+            f.write(f"Total encontrados: {len(encontrados)}\n" + "=" * 45 + "\n")
+            f.write("\n".join(encontrados))
+        resumo = "\n".join(encontrados[:7])
+        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", f"Concluido! {len(encontrados)} PIDs salvos em:\n{nome_arq}\n\n{resumo}"))
