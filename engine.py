@@ -66,22 +66,20 @@ class TR4EngineMixin:
         scroll = ScrollView(size_hint_y=0.78)
         lista = GridLayout(cols=1, spacing=12, size_hint_y=None, padding=(4, 6))
         lista.bind(minimum_height=lista.setter("height"))
-        popup = Popup(title="Selecionar Dispositivo Bluetooth", content=box, size_hint=(0.95, 0.85))
+        popup = Popup(title="Selecionar Scanner Bluetooth", content=box, size_hint=(0.95, 0.85))
         for dev in pareados:
-            nome = str(dev.getName() or "Sem Nome")
-            mac = str(dev.getAddress() or "")
+            nome = str(dev.getName() or "").strip()
+            if not nome:
+                nome = str(dev.getAddress() or "Dispositivo Sem Nome")
             btn = Button(
-                text=f"{nome}\n{mac}",
+                text=nome,
                 size_hint_y=None,
-                height=78,
-                font_size="14sp",
-                halign="center",
-                valign="middle",
+                height=68,
+                font_size="16sp",
                 bold=True,
                 background_normal="",
                 background_color=(0.14, 0.42, 0.68, 1),
             )
-            btn.bind(size=btn.setter("text_size"))
             btn.bind(on_release=lambda inst, d=dev, p=popup: self._iniciar_conexao_bt_escolhido(adapter, d, p))
             lista.add_widget(btn)
         scroll.add_widget(lista)
@@ -202,24 +200,29 @@ class TR4EngineMixin:
     def enviar_comando_raw(self, cmd, timeout=1.5):
         if not self.bt_out or not self.bt_in:
             return ""
-        with self.bt_lock:
-            try:
-                self._limpar_buffer_bt()
-                self.bt_out.write((cmd + "\r").encode("ascii"))
-                self.bt_out.flush()
-                resposta = bytearray()
-                t_limite = time.time() + timeout
-                while time.time() < t_limite:
-                    if self.bt_in.available() > 0:
-                        b = self.bt_in.read()
-                        if b == 62:
-                            break
-                        resposta.append(b)
-                    else:
-                        time.sleep(0.01)
-                return resposta.decode("ascii", errors="ignore").replace("\r", " ").replace("\n", " ").strip()
-            except Exception:
-                return ""
+        lock = getattr(self, "bt_lock", None)
+        if lock:
+            lock.acquire()
+        try:
+            self._limpar_buffer_bt()
+            self.bt_out.write((cmd + "\r").encode("ascii"))
+            self.bt_out.flush()
+            resposta = bytearray()
+            t_limite = time.time() + timeout
+            while time.time() < t_limite:
+                if self.bt_in.available() > 0:
+                    b = self.bt_in.read()
+                    if b == 62:
+                        break
+                    resposta.append(b)
+                else:
+                    time.sleep(0.01)
+            return resposta.decode("ascii", errors="ignore").replace("\r", " ").replace("\n", " ").strip()
+        except Exception:
+            return ""
+        finally:
+            if lock:
+                lock.release()
     def parse_bytes_kwp(self, resp_str, cmd_enviado):
         limpo = "".join(c for c in resp_str.upper() if c in "0123456789ABCDEF")
         prefixo_ok = "61" + cmd_enviado[2:4].upper()
@@ -251,12 +254,14 @@ class TR4EngineMixin:
         while self.rodando:
             t_atual = time.time() - t0
             cache_comandos = {}
-            log_ativos = getattr(self, "selecionados_log", {}) if self.gravando_log else {}
+            gravando_ativo = self.gravando_log and not getattr(self, "log_pausado", False)
+            log_ativos = getattr(self, "selecionados_log", {}) if gravando_ativo else {}
+
             for pid in PIDS_DB:
                 if not self.rodando:
                     break
                 ativo = self.selecionados.get(pid["id"], False) or log_ativos.get(pid["id"], False)
-                if not ativo or pid["cmd"] == "CALC_HIBRIDO":
+                if not ativo:
                     continue
                 if self.modo_simulacao:
                     valor = pid["sim"](t_atual)
@@ -274,22 +279,16 @@ class TR4EngineMixin:
             if not self.rodando:
                 break
 
-            et_sfs = self.valores_atuais.get("ETANOL_REAL")
-            stft_v = self.valores_atuais.get("STFT")
-            ltft_v = self.valores_atuais.get("LTFT")
-            if isinstance(et_sfs, (int, float)) and isinstance(stft_v, (int, float)) and isinstance(ltft_v, (int, float)):
-                ajuste_trim = (stft_v + ltft_v) * 1.8
-                self._registrar_valor("ETANOL_INST", round(max(0.0, min(100.0, et_sfs + ajuste_trim)), 0))
-
-            if self.gravando_log and self.writer_log and hasattr(self, "pids_gravando_lista"):
+            if gravando_ativo and self.writer_log and hasattr(self, "pids_gravando_lista"):
                 try:
                     linha = [round(time.time() - self.inicio_log_ts, 2)] + [self.valores_atuais.get(pid_id, "") for pid_id in self.pids_gravando_lista]
                     self.writer_log.writerow(linha)
                     self.arquivo_log.flush()
+                    self.linhas_gravadas_log = getattr(self, "linhas_gravadas_log", 0) + 1
                 except Exception:
                     pass
             Clock.schedule_once(self.atualizar_interface)
-            time.sleep(0.12 if self.modo_simulacao else 0.05)
+            time.sleep(0.12 if self.modo_simulacao else 0.04)
 
     def atualizar_interface(self, dt):
         for pid_id, widgets in self.cards_ui.items():
@@ -317,9 +316,13 @@ class TR4EngineMixin:
     def iniciar_gravacao_log(self, *args):
         if not self.rodando:
             if hasattr(self, "lbl_log_info"):
-                self.lbl_log_info.text = "Conecte a ECU antes de iniciar o Log!"
+                self.lbl_log_info.text = "Conecte a ECU ou Simulacao antes de iniciar o Log!"
             return
         if self.gravando_log:
+            if getattr(self, "log_pausado", False):
+                self.log_pausado = False
+                if hasattr(self, "lbl_log_info"):
+                    self.lbl_log_info.text = f"RETOMANDO GRAVACAO ({self.linhas_gravadas_log} linhas):\n{self.caminho_log_atual}"
             return
         try:
             sel_log = getattr(self, "selecionados_log", {})
@@ -328,10 +331,14 @@ class TR4EngineMixin:
                 self.pids_gravando_lista = [p["id"] for p in PIDS_DB if p["rapido"]]
             pasta = self._obter_pasta_gravacao()
             nome_arq = os.path.join(pasta, f"TR4_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+            self.caminho_log_atual = nome_arq
             self.arquivo_log = open(nome_arq, "w", newline="", encoding="utf-8")
             self.writer_log = csv.writer(self.arquivo_log, delimiter=";")
             self.writer_log.writerow(["Tempo_s"] + self.pids_gravando_lista)
+            self.arquivo_log.flush()
             self.inicio_log_ts = time.time()
+            self.linhas_gravadas_log = 0
+            self.log_pausado = False
             self.gravando_log = True
             if hasattr(self, "lbl_log_info"):
                 self.lbl_log_info.text = f"GRAVANDO ({len(self.pids_gravando_lista)} PIDs):\n{nome_arq}"
@@ -339,45 +346,87 @@ class TR4EngineMixin:
             if hasattr(self, "lbl_log_info"):
                 self.lbl_log_info.text = f"Erro ao criar CSV: {e}"
 
+    def pausar_gravacao_log(self, *args):
+        if not self.gravando_log:
+            if hasattr(self, "lbl_log_info"):
+                self.lbl_log_info.text = "Nenhum log ativo para pausar."
+            return
+        self.log_pausado = True
+        if hasattr(self, "lbl_log_info"):
+            qtd = getattr(self, "linhas_gravadas_log", 0)
+            self.lbl_log_info.text = f"LOG PAUSADO ({qtd} linhas gravadas).\nClique em INICIAR / CONTINUAR para retomar."
+
     def parar_gravacao_log(self, *args):
+        qtd = getattr(self, "linhas_gravadas_log", 0)
+        arq = getattr(self, "caminho_log_atual", "")
         self.gravando_log = False
+        self.log_pausado = False
         if self.arquivo_log:
             try:
+                self.arquivo_log.flush()
                 self.arquivo_log.close()
             except Exception:
                 pass
             self.arquivo_log = None
             self.writer_log = None
-        if hasattr(self, "lbl_log_info"):
-            self.lbl_log_info.text = "Log salvo e fechado com sucesso."
+        if hasattr(self, "lbl_log_info") and arq:
+            self.lbl_log_info.text = f"LOG ENCERRADO E SALVO ({qtd} linhas):\n{arq}"
     def ler_info_ecu(self, *args):
         if self.modo_simulacao:
-            self.lbl_eng.text = "Modelo ECU: IAW4AMHWM44\n\nCalibracao: 0401BA83\n\nSoftware: 4AMMS\n\nOdometro Real ECU: 69.456 km"
+            self.lbl_eng.text = (
+                "Desenho FIAT: CA130195\n"
+                "Numero HW: IAW4AMHWM44 (Ver: 00)\n"
+                "Numero SW: 0401BA83 (Ver: 0000)\n"
+                "Homologacao: 4AMMS | ISO: 0000000000\n"
+                "Data Programacao: 20/10/2009\n"
+                "Reescritas Flash: 1 | Odo Reescr: 0 km\n"
+                "Odometro Real ECU: 69.456 km"
+            )
             return
         if not self.rodando or not self.bt_out or not self.bt_in:
             self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ECU primeiro."
             return
         self.rodando = False
-        self.lbl_eng.text = "Lendo identificacao e odometro da ECU..."
+        self.lbl_eng.text = "Lendo identificacao completa e odometro da ECU..."
         threading.Thread(target=self._ler_info_ecu_thread, daemon=True).start()
 
     def _ler_info_ecu_thread(self):
         def _ascii(b_list):
             return "".join(chr(x) if 32 <= x <= 126 else "" for x in b_list).strip()
         time.sleep(0.25)
-        b92 = self.parse_bytes_kwp(self.enviar_comando_raw("2192", timeout=1.5), "2192")
-        b94 = self.parse_bytes_kwp(self.enviar_comando_raw("2194", timeout=1.5), "2194")
-        b96 = self.parse_bytes_kwp(self.enviar_comando_raw("2196", timeout=1.5), "2196")
+        b80 = self.parse_bytes_kwp(self.enviar_comando_raw("2180", timeout=2.0), "2180")
         b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171", timeout=1.5), "2171")
+        b72 = self.parse_bytes_kwp(self.enviar_comando_raw("2172", timeout=1.5), "2172")
+        b73 = self.parse_bytes_kwp(self.enviar_comando_raw("2173", timeout=1.5), "2173")
+
+        if len(b80) >= 61:
+            desenho = _ascii(b80[0:11]) or "N/D"
+            hw = _ascii(b80[11:22]) or "N/D"
+            hw_ver = f"{b80[22]:02X}"
+            sw = _ascii(b80[23:34]) or "N/D"
+            sw_ver = f"{b80[34]:02X}{b80[35]:02X}"
+            homolog = _ascii(b80[36:42]) or "N/D"
+            iso = "".join(f"{x:02X}" for x in b80[42:47])
+            data_prog = f"{b80[60]:02X}/{b80[59]:02X}/20{b80[58]:02X}"
+        else:
+            desenho, hw, hw_ver, sw, sw_ver, homolog, iso, data_prog = ("N/D", "N/D", "00", "N/D", "0000", "N/D", "N/D", "N/D")
+
         odo_txt = "Nao disponivel"
         if len(b71) >= 3:
             b_o0, b_o1, b_o2 = itemgetter(0, 1, 2)(b71)
             km_val = (b_o0 << 16) | (b_o1 << 8) | b_o2
             odo_txt = f"{km_val:,} km".replace(",", ".")
+
+        reescr = ((b72[0] << 8) | b72[1]) if len(b72) >= 2 else 0
+        odo_reescr = ((b73[0] << 16) | (b73[1] << 8) | b73[2]) if len(b73) >= 3 else 0
+
         texto = (
-            f"Modelo ECU: {_ascii(b92) or 'N/D'}\n\n"
-            f"Calibracao: {_ascii(b94) or 'N/D'}\n\n"
-            f"Software: {_ascii(b96) or 'N/D'}\n\n"
+            f"Desenho FIAT: {desenho}\n"
+            f"Numero HW: {hw} (Ver: {hw_ver})\n"
+            f"Numero SW: {sw} (Ver: {sw_ver})\n"
+            f"Homologacao: {homolog} | ISO: {iso}\n"
+            f"Data Programacao: {data_prog}\n"
+            f"Reescritas Flash: {reescr} | Odo Reescr: {odo_reescr} km\n"
             f"Odometro Real ECU: {odo_txt}"
         )
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", texto))
@@ -411,8 +460,8 @@ class TR4EngineMixin:
                 prefixos = {"0": "P0", "1": "P1", "2": "P2", "3": "P3", "4": "C0", "8": "B0", "C": "U0"}
                 for i in range(0, len(dados) - 5, 6):
                     dtc_hex = dados[i:i + 4]
-                    p_letra = prefixos.get(dtc_hex[:1], "P" + dtc_hex[:1])
-                    cods.append(f"{p_letra}{dtc_hex[1:4]}")
+                    p_letra = prefixos.get(dtc_hex[0], "P" + dtc_hex[0])
+                    cods.append(f"{p_letra}{dtc_hex[1:]}")
                 msg = f"Falhas encontradas ({qtd}):\n\n" + (", ".join(cods) if cods else dados)
         else:
             msg = f"Retorno da ECU:\n{resp if resp else 'Sem resposta'}"
