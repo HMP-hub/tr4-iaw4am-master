@@ -190,3 +190,38 @@ class TR4EngineMixin:
             self.bt_socket = None
         self.lbl_status.text = "DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)"
         self.lbl_status.color = (1, 0.78, 0.2, 1)
+
+    def iniciar_varredura_ecu(self, *args):
+        if self.modo_simulacao:
+            self.lbl_eng.text = "Simulacao Varredura:\n2131: 03 0C (RPM)\n213B: 80 (ECT)\n2147: A2 (STFT)"
+            return
+        if not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "Conecte ao OBDLink MX+ primeiro!"
+            return
+        self.rodando = False
+        time.sleep(0.15)
+        threading.Thread(target=self._executar_varredura_thread, daemon=True).start()
+
+    def _executar_varredura_thread(self):
+        pasta = "/sdcard/Download" if os.path.exists("/sdcard/Download") else "."
+        nome_arq = os.path.join(pasta, f"MAPA_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+        encontrados = []
+        for code in range(0x00, 0x100):
+            cmd = f"21{code:02X}"
+            if code % 16 == 0:
+                Clock.schedule_once(lambda dt, c=cmd, n=len(encontrados): setattr(self.lbl_eng, "text", f"Varrendo {c} / 21FF...\nAtivos encontrados: {n}"))
+            resp = self.enviar_comando_raw(cmd)
+            limpo = "".join(c for c in resp.upper() if c in "0123456789ABCDEF")
+            prefixo_ok = f"61{code:02X}"
+            idx = limpo.find(prefixo_ok)
+            if idx != -1:
+                dados = limpo[idx + 4:]
+                pares = " ".join(dados[i:i + 2] for i in range(0, len(dados) - 1, 2))
+                encontrados.append(f"{cmd} -> {pares}")
+        with open(nome_arq, "w", encoding="utf-8") as f:
+            f.write(f"MAPA DE PIDS ATIVOS - ECU IAW 4AM ({datetime.now()})\n")
+            f.write(f"Total encontrados: {len(encontrados)}\n" + "=" * 45 + "\n")
+            f.write("\n".join(encontrados))
+        resumo = "\n".join(encontrados[:7])
+        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", f"Concluido! {len(encontrados)} PIDs salvos em:\n{nome_arq}\n\n{resumo}"))
+
