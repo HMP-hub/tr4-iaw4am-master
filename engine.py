@@ -84,6 +84,23 @@ class TR4EngineMixin:
             return []
         dados_hex = limpo[idx + 4:]
         return [int(dados_hex[i:i + 2], 16) for i in range(0, len(dados_hex) - 1, 2)]
+
+    def _registrar_valor(self, pid_id, valor):
+        self.valores_atuais[pid_id] = valor
+        if isinstance(valor, (int, float)):
+            if pid_id not in self.valores_min or valor < self.valores_min[pid_id]:
+                self.valores_min[pid_id] = valor
+            if pid_id not in self.valores_max or valor > self.valores_max[pid_id]:
+                self.valores_max[pid_id] = valor
+
+    def zerar_min_max(self, *args):
+        self.valores_min = {}
+        self.valores_max = {}
+        for pid_id, val in self.valores_atuais.items():
+            if isinstance(val, (int, float)):
+                self.valores_min[pid_id] = val
+                self.valores_max[pid_id] = val
+        self.atualizar_interface(0)
     def loop_leitura(self):
         t0 = time.time()
         while self.rodando:
@@ -107,14 +124,14 @@ class TR4EngineMixin:
                     if not bytes_resp:
                         continue
                     valor = pid["calc"](bytes_resp)
-                self.valores_atuais[pid["id"]] = valor
+                self._registrar_valor(pid["id"], valor)
 
             et_sfs = self.valores_atuais.get("ETANOL_REAL")
             stft_v = self.valores_atuais.get("STFT")
             ltft_v = self.valores_atuais.get("LTFT")
             if isinstance(et_sfs, (int, float)) and isinstance(stft_v, (int, float)) and isinstance(ltft_v, (int, float)):
                 ajuste_trim = (stft_v + ltft_v) * 1.8
-                self.valores_atuais["ETANOL_INST"] = round(max(0.0, min(100.0, et_sfs + ajuste_trim)), 0)
+                self._registrar_valor("ETANOL_INST", round(max(0.0, min(100.0, et_sfs + ajuste_trim)), 0))
 
             if self.gravando_log and self.writer_log and hasattr(self, "pids_gravando_lista"):
                 try:
@@ -127,8 +144,13 @@ class TR4EngineMixin:
             time.sleep(0.12 if self.modo_simulacao else 0.04)
 
     def atualizar_interface(self, dt):
-        for pid_id, (lbl_val, unidade) in self.cards_ui.items():
-            lbl_val.text = f"{self.valores_atuais.get(pid_id, '--')} {unidade}"
+        for pid_id, widgets in self.cards_ui.items():
+            lbl_val, lbl_mm, unidade = widgets
+            val = self.valores_atuais.get(pid_id, "--")
+            lbl_val.text = f"{val} {unidade}"
+            vmin = self.valores_min.get(pid_id, "--")
+            vmax = self.valores_max.get(pid_id, "--")
+            lbl_mm.text = f"MIN: {vmin}   |   MAX: {vmax}"
         if hasattr(self, "graficos_lista") and hasattr(self, "pids_graf"):
             for idx, graf in enumerate(self.graficos_lista):
                 val = self.valores_atuais.get(self.pids_graf[idx])
@@ -167,6 +189,43 @@ class TR4EngineMixin:
             self.writer_log = None
         if hasattr(self, "lbl_log_info"):
             self.lbl_log_info.text = "Log salvo e fechado com sucesso."
+
+    def ler_info_ecu(self, *args):
+        if self.modo_simulacao:
+            self.lbl_eng.text = "INFO ECU (SIMULACAO):\nModelo: IAW4AMS4 (4AM.AR)\nOdometro ECU: 69.412 km\nHardware/SW: 4AMMS"
+            return
+        if not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "Conecte ao OBDLink MX+ primeiro!"
+            return
+        estava_rodando = self.rodando
+        self.rodando = False
+        time.sleep(0.15)
+        threading.Thread(target=self._ler_info_ecu_thread, args=(estava_rodando,), daemon=True).start()
+
+    def _ler_info_ecu_thread(self, retomar):
+        def _ascii(b_list):
+            return "".join(chr(x) if 32 <= x <= 126 else "" for x in b_list).strip()
+        b80 = self.parse_bytes_kwp(self.enviar_comando_raw("2180"), "2180")
+        b92 = self.parse_bytes_kwp(self.enviar_comando_raw("2192"), "2192")
+        b94 = self.parse_bytes_kwp(self.enviar_comando_raw("2194"), "2194")
+        b96 = self.parse_bytes_kwp(self.enviar_comando_raw("2196"), "2196")
+        b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171"), "2171")
+        odo_txt = "N/D"
+        if len(b71) >= 3:
+            km_val = (b71[0] << 16) | (b71[1] << 8) | b71[2]
+            odo_txt = f"{km_val:,} km (HEX: {b71[0]:02X} {b71[1]:02X} {b71[2]:02X})".replace(",", ".")
+        texto = (
+            f"=== IDENTIFICACAO ECU IAW 4AM ===\n"
+            f"ID Geral (2180): {_ascii(b80)}\n"
+            f"Modelo/SW (2192): {_ascii(b92)}\n"
+            f"Serie/Calib (2194): {_ascii(b94)}\n"
+            f"Codigo ECU (2196): {_ascii(b96)}\n"
+            f"Odometro Real ECU (2171): {odo_txt}"
+        )
+        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", texto))
+        if retomar:
+            self.rodando = True
+            self.loop_leitura()
 
     def ler_dtcs(self, *args):
         if self.modo_simulacao:
