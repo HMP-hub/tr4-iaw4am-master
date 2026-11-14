@@ -203,7 +203,7 @@ class TR4MonitorApp(App, TR4EngineMixin):
         self.area_central.add_widget(box)
 
         def mostrar_aba_engenharia(self, *args):
-        self.limpar_area_central()
+            self.limpar_area_central()
         box = BoxLayout(orientation="vertical", spacing=8, padding=8)
         self.lbl_eng = Label(text="Modulo de Engenharia IAW 4AM.AR (SW 4AMMS)\nSessao Estendida KWP2000 (10 81)", font_size="12sp", size_hint_y=0.55)
         box.add_widget(self.lbl_eng)
