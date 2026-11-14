@@ -458,3 +458,45 @@ class TR4EngineMixin:
             self.lbl_status.color = (1, 0.78, 0.2, 1)
 
     def iniciar_varredura_ecu(self, *args):
+    def _executar_varredura_thread(self):
+        time.sleep(0.35)
+        pasta = self._obter_pasta_gravacao()
+        nome_arq = os.path.join(pasta, f"MAPA_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+        encontrados = []
+        for code in range(0x00, 0x100):
+            if not getattr(self, "varrendo", False):
+                break
+            cmd = f"21{code:02X}"
+            if code % 8 == 0:
+                Clock.schedule_once(
+                    lambda dt, c=cmd, n=len(encontrados): setattr(
+                        self.lbl_eng, "text", f"Varrendo endereco {c} de 21FF...\n\nPIDs ativos encontrados: {n}"
+                    )
+                )
+            resp = self.enviar_comando_raw(cmd, timeout=0.9)
+            limpo = "".join(c for c in resp.upper() if c in "0123456789ABCDEF")
+            prefixo_ok = f"61{code:02X}"
+            idx = limpo.find(prefixo_ok)
+            if idx != -1:
+                dados = limpo[idx + 4:]
+                pares = " ".join(dados[i:i + 2] for i in range(0, len(dados) - 1, 2))
+                encontrados.append(f"{cmd} -> {pares}")
+
+        self.varrendo = False
+        try:
+            with open(nome_arq, "w", encoding="utf-8") as f:
+                f.write(f"MAPA DE PIDS ATIVOS - ECU IAW 4AM ({datetime.now()})\n")
+                f.write(f"Total encontrados: {len(encontrados)}\n" + "=" * 45 + "\n")
+                f.write("\n".join(encontrados))
+            resumo = f"Salvo em:\n{nome_arq}"
+        except Exception as e:
+            resumo = f"Erro ao salvar arquivo: {e}"
+
+        Clock.schedule_once(
+            lambda dt: setattr(
+                self.lbl_eng, "text", f"Varredura finalizada!\n\nTotal encontrados: {len(encontrados)}\n\n{resumo}"
+            )
+        )
+        if self.bt_socket:
+            self.rodando = True
+            self.loop_leitura()
