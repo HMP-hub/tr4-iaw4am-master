@@ -89,12 +89,12 @@ class TR4EngineMixin:
         while self.rodando:
             t_atual = time.time() - t0
             cache_comandos = {}
+            log_ativos = getattr(self, "selecionados_log", {}) if self.gravando_log else {}
             for pid in PIDS_DB:
                 if not self.rodando:
                     break
-                if not self.selecionados.get(pid["id"], False):
-                    continue
-                if pid["cmd"] == "CALC_HIBRIDO":
+                ativo = self.selecionados.get(pid["id"], False) or log_ativos.get(pid["id"], False)
+                if not ativo or pid["cmd"] == "CALC_HIBRIDO":
                     continue
                 if self.modo_simulacao:
                     valor = pid["sim"](t_atual)
@@ -116,9 +116,9 @@ class TR4EngineMixin:
                 ajuste_trim = (stft_v + ltft_v) * 1.8
                 self.valores_atuais["ETANOL_INST"] = round(max(0.0, min(100.0, et_sfs + ajuste_trim)), 0)
 
-            if self.gravando_log and self.writer_log:
+            if self.gravando_log and self.writer_log and hasattr(self, "pids_gravando_lista"):
                 try:
-                    linha = [round(time.time() - self.inicio_log_ts, 2)] + [self.valores_atuais.get(p["id"], "") for p in PIDS_DB]
+                    linha = [round(time.time() - self.inicio_log_ts, 2)] + [self.valores_atuais.get(pid_id, "") for pid_id in self.pids_gravando_lista]
                     self.writer_log.writerow(linha)
                     self.arquivo_log.flush()
                 except Exception:
@@ -139,15 +139,19 @@ class TR4EngineMixin:
         if self.gravando_log:
             return
         try:
+            sel_log = getattr(self, "selecionados_log", {p["id"]: p["rapido"] for p in PIDS_DB})
+            self.pids_gravando_lista = [p["id"] for p in PIDS_DB if sel_log.get(p["id"], False)]
+            if not self.pids_gravando_lista:
+                self.pids_gravando_lista = [p["id"] for p in PIDS_DB if p["rapido"]]
             pasta = "/sdcard/Download" if os.path.exists("/sdcard/Download") else "."
             nome_arq = os.path.join(pasta, f"TR4_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
             self.arquivo_log = open(nome_arq, "w", newline="", encoding="utf-8")
             self.writer_log = csv.writer(self.arquivo_log, delimiter=";")
-            self.writer_log.writerow(["Tempo_s"] + [p["id"] for p in PIDS_DB])
+            self.writer_log.writerow(["Tempo_s"] + self.pids_gravando_lista)
             self.inicio_log_ts = time.time()
             self.gravando_log = True
             if hasattr(self, "lbl_log_info"):
-                self.lbl_log_info.text = f"GRAVANDO LOG:\n{nome_arq}"
+                self.lbl_log_info.text = f"GRAVANDO ({len(self.pids_gravando_lista)} PIDs):\n{nome_arq}"
         except Exception as e:
             if hasattr(self, "lbl_log_info"):
                 self.lbl_log_info.text = f"Erro ao criar CSV: {e}"
@@ -224,4 +228,3 @@ class TR4EngineMixin:
             f.write("\n".join(encontrados))
         resumo = "\n".join(encontrados[:7])
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", f"Concluido! {len(encontrados)} PIDs salvos em:\n{nome_arq}\n\n{resumo}"))
-
