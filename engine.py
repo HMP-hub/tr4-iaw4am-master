@@ -4,7 +4,6 @@ import csv
 import time
 import threading
 from datetime import datetime
-from operator import itemgetter
 from kivy.clock import Clock
 from kivy.uix.popup import Popup
 from kivy.uix.boxlayout import BoxLayout
@@ -32,9 +31,9 @@ class TR4EngineMixin:
                 Permission.BLUETOOTH_ADMIN,
                 Permission.WRITE_EXTERNAL_STORAGE,
                 Permission.READ_EXTERNAL_STORAGE,
+                "android.permission.BLUETOOTH_CONNECT",
+                "android.permission.BLUETOOTH_SCAN",
             ]
-            for extra in ["android.permission.BLUETOOTH_CONNECT", "android.permission.BLUETOOTH_SCAN"]:
-                perms.append(extra)
             request_permissions(perms)
         except Exception:
             pass
@@ -81,6 +80,7 @@ class TR4EngineMixin:
                 background_normal="",
                 background_color=(0.14, 0.42, 0.68, 1),
             )
+            btn.bind(size=btn.setter("text_size"))
             btn.bind(on_release=lambda inst, d=dev, p=popup: self._iniciar_conexao_bt_escolhido(adapter, d, p))
             lista.add_widget(btn)
         scroll.add_widget(lista)
@@ -219,6 +219,7 @@ class TR4EngineMixin:
                 return resposta.decode("ascii", errors="ignore").replace("\r", " ").replace("\n", " ").strip()
             except Exception:
                 return ""
+
     def parse_bytes_kwp(self, resp_str, cmd_enviado):
         limpo = "".join(c for c in resp_str.upper() if c in "0123456789ABCDEF")
         prefixo_ok = "61" + cmd_enviado[2:4].upper()
@@ -244,7 +245,6 @@ class TR4EngineMixin:
                 self.valores_min[pid_id] = val
                 self.valores_max[pid_id] = val
         self.atualizar_interface(0)
-
     def loop_leitura(self):
         t0 = time.time()
         while self.rodando:
@@ -294,7 +294,7 @@ class TR4EngineMixin:
         for pid_id, widgets in self.cards_ui.items():
             lbl_val, lbl_mm, unidade = widgets
             val = self.valores_atuais.get(pid_id, "--")
-            lbl_val.text = f"{val} {unidade}"
+            lbl_val.text = f"{val} {unidade}" if val != "--" else "--"
             vmin = self.valores_min.get(pid_id, "--")
             vmax = self.valores_max.get(pid_id, "--")
             lbl_mm.text = f"MIN: {vmin}   |   MAX: {vmax}"
@@ -352,7 +352,7 @@ class TR4EngineMixin:
 
     def ler_info_ecu(self, *args):
         if self.modo_simulacao:
-            self.lbl_eng.text = "Modelo: IAW4AMHWM44\nCalibracao: 0401BA83\nSoftware: 4AMMS\nOdometro Real: 69.456 km"
+            self.lbl_eng.text = "Modelo ECU: IAW4AMHWM44\n\nCalibracao: 0401BA83\n\nSoftware: 4AMMS\n\nOdometro Real ECU: 69.456 km"
             return
         if not self.rodando or not self.bt_out or not self.bt_in:
             self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ECU primeiro."
@@ -371,8 +371,7 @@ class TR4EngineMixin:
         b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171", timeout=1.5), "2171")
         odo_txt = "Nao disponivel"
         if len(b71) >= 3:
-            b_o0, b_o1, b_o2 = itemgetter(0, 1, 2)(b71)
-            km_val = (b_o0 << 16) | (b_o1 << 8) | b_o2
+            km_val = (b71[0] << 16) | (b71[1] << 8) | b71[2]
             odo_txt = f"{km_val:,} km".replace(",", ".")
         texto = (
             f"Modelo ECU: {_ascii(b92) or 'N/D'}\n\n"
@@ -381,8 +380,9 @@ class TR4EngineMixin:
             f"Odometro Real ECU: {odo_txt}"
         )
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", texto))
-        self.rodando = True
-        self.loop_leitura()
+        if self.bt_socket:
+            self.rodando = True
+            self.loop_leitura()
 
     def ler_dtcs(self, *args):
         if self.modo_simulacao:
@@ -406,13 +406,19 @@ class TR4EngineMixin:
                 msg = "Nenhuma falha ativa ou pendente na ECU."
             else:
                 dados = limpo[idx + 4:]
-                cods = [f"P{dados[i:i+4]}" for i in range(0, len(dados) - 3, 6)]
-                msg = f"Falhas encontradas ({qtd}):\n" + ", ".join(cods)
+                cods = []
+                prefixos = {"0": "P0", "1": "P1", "2": "P2", "3": "P3", "4": "C0", "8": "B0", "C": "U0"}
+                for i in range(0, len(dados) - 5, 6):
+                    dtc_hex = dados[i:i + 4]
+                    p_letra = prefixos.get(dtc_hex[0], "P" + dtc_hex[0])
+                    cods.append(f"{p_letra}{dtc_hex[1:]}")
+                msg = f"Falhas encontradas ({qtd}):\n\n" + (", ".join(cods) if cods else dados)
         else:
             msg = f"Retorno da ECU:\n{resp if resp else 'Sem resposta'}"
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", msg))
-        self.rodando = True
-        self.loop_leitura()
+        if self.bt_socket:
+            self.rodando = True
+            self.loop_leitura()
 
     def apagar_dtcs(self, *args):
         if self.modo_simulacao:
@@ -429,8 +435,26 @@ class TR4EngineMixin:
         resp = self.enviar_comando_raw("14FF00", timeout=2.0)
         msg = "Falhas apagadas com sucesso!" if "54" in resp.upper() else f"Comando enviado ({resp})"
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", msg))
-        self.rodando = True
-        self.loop_leitura()
+        if self.bt_socket:
+            self.rodando = True
+            self.loop_leitura()
 
     def desconectar_ecu(self, *args):
         self.rodando = False
+        self.varrendo = False
+        self.modo_simulacao = False
+        self.parar_gravacao_log()
+        self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
+        self.valores_min = {}
+        self.valores_max = {}
+        self.atualizar_interface(0)
+        if hasattr(self, "lbl_eng"):
+            self.lbl_eng.text = "ECU desconectada."
+        if self.bt_socket:
+            self.lbl_status.text = "ECU DESCONECTADA | BLUETOOTH ATIVO"
+            self.lbl_status.color = (0.3, 0.85, 1.0, 1)
+        else:
+            self.lbl_status.text = "DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)"
+            self.lbl_status.color = (1, 0.78, 0.2, 1)
+
+    def iniciar_varredura_ecu(self, *args):
