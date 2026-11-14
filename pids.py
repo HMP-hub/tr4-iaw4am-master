@@ -5,13 +5,15 @@ from operator import itemgetter
 
 b0 = itemgetter(0)
 b1 = itemgetter(1)
+b3 = itemgetter(3)
+b5 = itemgetter(5)
 
 
 def decode_malha_completa(bytes_a5):
     if len(bytes_a5) < 6:
         return "SEM DADOS"
-    d = bytes_a5[3]
-    g = bytes_a5[5]
+    d = b3(bytes_a5)
+    g = b5(bytes_a5)
     if d == 0:
         return "EMERGENCIA"
     if d == 1 and g == 1:
