@@ -114,35 +114,103 @@ class TR4EngineMixin:
             self.lbl_status.text = "ERRO: FACA A CONEXAO BLUETOOTH PRIMEIRO!"
             self.lbl_status.color = (1.0, 0.35, 0.35, 1)
             return
-        self.lbl_status.text = "INICIANDO SESSAO KWP2000 NA ECU..."
+        self.lbl_status.text = "INICIANDO K-LINE (KWP2000) NA ECU..."
         self.lbl_status.color = (1.0, 0.78, 0.2, 1)
         threading.Thread(target=self._conectar_ecu_thread, daemon=True).start()
 
     def _conectar_ecu_thread(self):
+        log_hs = []
         try:
-            for cmd in ["ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP5", "ATSH8110F1", "ATFI", "1081"]:
-                self.enviar_comando_raw(cmd)
-                time.sleep(0.15)
+            while self.bt_in.available() > 0:
+                self.bt_in.read()
+            r_atz = self.enviar_comando_raw("ATZ", timeout=2.0)
+            log_hs.append(f"ATZ -> {r_atz or 'SEM RESP'}")
+            if not r_atz:
+                Clock.schedule_once(lambda dt: self._falha_handshake("SCANNER NAO RESPONDEU AO ATZ", log_hs))
+                return
+
+            setup_cmds = [
+                ("ATE0", 0.8),
+                ("ATL0", 0.8),
+                ("ATS0", 0.8),
+                ("ATH0", 0.8),
+                ("ATAT1", 0.8),
+                ("ATST64", 0.8),
+                ("ATSP5", 1.0),
+                ("ATSH8110F1", 1.0),
+                ("ATWM8110F13E", 1.0),
+            ]
+            for cmd, tout in setup_cmds:
+                resp = self.enviar_comando_raw(cmd, timeout=tout)
+                log_hs.append(f"{cmd} -> {resp}")
+
+            Clock.schedule_once(lambda dt: self._atualizar_status("TENTANDO FAST INIT (ATFI) KWP2000...", (1.0, 0.78, 0.2, 1)))
+            r_init = self.enviar_comando_raw("ATFI", timeout=3.5)
+            log_hs.append(f"ATFI -> {r_init or 'TIMEOUT'}")
+
+            if "OK" not in r_init.upper():
+                Clock.schedule_once(lambda dt: self._atualizar_status("ATFI FALHOU, TENTANDO 5-BAUD (ATSP4)...", (1.0, 0.78, 0.2, 1)))
+                self.enviar_comando_raw("ATSP4", timeout=1.0)
+                self.enviar_comando_raw("ATSH8110F1", timeout=1.0)
+                r_init = self.enviar_comando_raw("ATSI", timeout=4.5)
+                log_hs.append(f"ATSI -> {r_init or 'TIMEOUT'}")
+
+            r_sess = self.enviar_comando_raw("1081", timeout=2.5)
+            log_hs.append(f"1081 -> {r_sess or 'TIMEOUT'}")
+            r_rpm = self.enviar_comando_raw("2131", timeout=2.0)
+            log_hs.append(f"2131 -> {r_rpm or 'TIMEOUT'}")
+
+            limpo_rpm = "".join(c for c in r_rpm.upper() if c in "0123456789ABCDEF")
+            limpo_sess = "".join(c for c in r_sess.upper() if c in "0123456789ABCDEF")
+            conectou_real = ("5081" in limpo_sess) or ("6131" in limpo_rpm)
+
+            if not conectou_real:
+                Clock.schedule_once(lambda dt: self._falha_handshake("ECU NAO RESPONDEU (CHAVE LIGADA?)", log_hs))
+                return
+
             self.modo_simulacao = False
             self.rodando = True
-            Clock.schedule_once(lambda dt: self._atualizar_status("ECU CONECTADA | IAW 4AM.AR (4AMMS)", (0.2, 0.95, 0.45, 1)))
+            resumo_ok = "\n".join(log_hs[-5:])
+            Clock.schedule_once(lambda dt: self._sucesso_handshake(resumo_ok))
             self.loop_leitura()
         except Exception as e:
             self.rodando = False
-            Clock.schedule_once(lambda dt, err=str(e): self._atualizar_status(f"FALHA ECU: {err[:35]}", (1.0, 0.35, 0.35, 1)))
+            log_hs.append(f"EXC: {e}")
+            Clock.schedule_once(lambda dt: self._falha_handshake(f"ERRO K-LINE: {str(e)[:28]}", log_hs))
+
+    def _sucesso_handshake(self, resumo):
+        self._atualizar_status("ECU CONECTADA | KWP2000 K-LINE ATIVO", (0.2, 0.95, 0.45, 1))
+        if hasattr(self, "lbl_eng"):
+            self.lbl_eng.text = f"=== HANDSHAKE KWP2000 OK ===\n{resumo}"
+
+    def _falha_handshake(self, titulo, log_hs):
+        self.rodando = False
+        self._atualizar_status(titulo, (1.0, 0.30, 0.30, 1))
+        detalhes = "\n".join(log_hs[-8:])
+        if hasattr(self, "lbl_eng"):
+            self.lbl_eng.text = f"=== FALHA CONEXAO ECU ===\n{detalhes}"
+        box = BoxLayout(orientation="vertical", padding=10, spacing=8)
+        lbl = Label(text=f"{titulo}\n\nLog do Scanner / Linha K:\n{detalhes}", font_size="12sp", halign="left", valign="top")
+        lbl.bind(size=lbl.setter("text_size"))
+        box.add_widget(lbl)
+        btn = Button(text="FECHAR", size_hint_y=0.18, background_normal="", background_color=(0.75, 0.22, 0.22, 1), bold=True)
+        pop = Popup(title="Diagnostico de Conexao K-Line", content=box, size_hint=(0.94, 0.72))
+        btn.bind(on_release=pop.dismiss)
+        box.add_widget(btn)
+        pop.open()
 
     def _atualizar_status(self, texto, cor):
         self.lbl_status.text = texto
         self.lbl_status.color = cor
 
-    def enviar_comando_raw(self, cmd):
+    def enviar_comando_raw(self, cmd, timeout=1.5):
         if not self.bt_out or not self.bt_in:
             return ""
         try:
             self.bt_out.write((cmd + "\r").encode("ascii"))
             self.bt_out.flush()
             resposta = bytearray()
-            t_limite = time.time() + 1.2
+            t_limite = time.time() + timeout
             while time.time() < t_limite:
                 if self.bt_in.available() > 0:
                     b = self.bt_in.read()
@@ -151,10 +219,9 @@ class TR4EngineMixin:
                     resposta.append(b)
                 else:
                     time.sleep(0.01)
-            return resposta.decode("ascii", errors="ignore").strip()
+            return resposta.decode("ascii", errors="ignore").replace("\r", " ").replace("\n", " ").strip()
         except Exception:
             return ""
-
     def parse_bytes_kwp(self, resp_str, cmd_enviado):
         limpo = "".join(c for c in resp_str.upper() if c in "0123456789ABCDEF")
         prefixo_ok = "61" + cmd_enviado[2:4].upper()
@@ -222,6 +289,7 @@ class TR4EngineMixin:
                     pass
             Clock.schedule_once(self.atualizar_interface)
             time.sleep(0.12 if self.modo_simulacao else 0.04)
+
     def atualizar_interface(self, dt):
         for pid_id, widgets in self.cards_ui.items():
             lbl_val, lbl_mm, unidade = widgets
@@ -360,7 +428,3 @@ class TR4EngineMixin:
                 encontrados.append(f"{cmd} -> {pares}")
         with open(nome_arq, "w", encoding="utf-8") as f:
             f.write(f"MAPA DE PIDS ATIVOS - ECU IAW 4AM ({datetime.now()})\n")
-            f.write(f"Total encontrados: {len(encontrados)}\n" + "=" * 45 + "\n")
-            f.write("\n".join(encontrados))
-        resumo = "\n".join(encontrados[:7])
-        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", f"Concluido! {len(encontrados)} PIDs salvos em:\n{nome_arq}\n\n{resumo}"))
