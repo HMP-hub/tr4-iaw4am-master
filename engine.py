@@ -61,21 +61,31 @@ class TR4EngineMixin:
                 self._atualizar_status(f"ERRO BT: {err[:42]}", (1.0, 0.35, 0.35, 1))
 
     def _abrir_seletor_bt(self, adapter, pareados):
-        box = BoxLayout(orientation="vertical", padding=8, spacing=6)
-        box.add_widget(Label(text="Toque no Scanner Bluetooth pareado:", size_hint_y=0.14, bold=True, font_size="14sp"))
-        scroll = ScrollView(size_hint_y=0.72)
-        lista = GridLayout(cols=1, spacing=6, size_hint_y=None)
+        box = BoxLayout(orientation="vertical", padding=10, spacing=10)
+        box.add_widget(Label(text="Toque no Scanner Bluetooth pareado:", size_hint_y=0.10, bold=True, font_size="15sp"))
+        scroll = ScrollView(size_hint_y=0.78)
+        lista = GridLayout(cols=1, spacing=12, size_hint_y=None, padding=(4, 6))
         lista.bind(minimum_height=lista.setter("height"))
-        popup = Popup(title="Selecionar Dispositivo Bluetooth", content=box, size_hint=(0.92, 0.75))
+        popup = Popup(title="Selecionar Dispositivo Bluetooth", content=box, size_hint=(0.95, 0.85))
         for dev in pareados:
             nome = str(dev.getName() or "Sem Nome")
             mac = str(dev.getAddress() or "")
-            btn = Button(text=f"{nome}\n({mac})", size_hint_y=None, height=62, font_size="13sp", bold=True, background_normal="", background_color=(0.14, 0.42, 0.68, 1))
+            btn = Button(
+                text=f"{nome}\n{mac}",
+                size_hint_y=None,
+                height=78,
+                font_size="14sp",
+                halign="center",
+                valign="middle",
+                bold=True,
+                background_normal="",
+                background_color=(0.14, 0.42, 0.68, 1),
+            )
             btn.bind(on_release=lambda inst, d=dev, p=popup: self._iniciar_conexao_bt_escolhido(adapter, d, p))
             lista.add_widget(btn)
         scroll.add_widget(lista)
         box.add_widget(scroll)
-        btn_fechar = Button(text="CANCELAR", size_hint_y=0.14, background_normal="", background_color=(0.75, 0.22, 0.22, 1), bold=True)
+        btn_fechar = Button(text="CANCELAR", size_hint_y=0.12, font_size="14sp", background_normal="", background_color=(0.75, 0.22, 0.22, 1), bold=True)
         btn_fechar.bind(on_release=popup.dismiss)
         box.add_widget(btn_fechar)
         popup.open()
@@ -122,44 +132,31 @@ class TR4EngineMixin:
     def _conectar_ecu_thread(self):
         log_hs = []
         try:
-            while self.bt_in.available() > 0:
-                self.bt_in.read()
-            r_atz = self.enviar_comando_raw("ATZ", timeout=2.0)
-            log_hs.append(f"ATZ -> {r_atz or 'SEM RESP'}")
+            self._limpar_buffer_bt()
+            r_atz = self.enviar_comando_raw("ATZ", timeout=2.5)
+            log_hs.append(f"Reset Scanner: {r_atz or 'SEM RESPOSTA'}")
             if not r_atz:
-                Clock.schedule_once(lambda dt: self._falha_handshake("SCANNER NAO RESPONDEU AO ATZ", log_hs))
+                Clock.schedule_once(lambda dt: self._falha_handshake("SCANNER NAO RESPONDEU", log_hs))
                 return
 
-            setup_cmds = [
-                ("ATE0", 0.8),
-                ("ATL0", 0.8),
-                ("ATS0", 0.8),
-                ("ATH0", 0.8),
-                ("ATAT1", 0.8),
-                ("ATST64", 0.8),
-                ("ATSP5", 1.0),
-                ("ATSH8110F1", 1.0),
-                ("ATWM8110F13E", 1.0),
-            ]
-            for cmd, tout in setup_cmds:
-                resp = self.enviar_comando_raw(cmd, timeout=tout)
-                log_hs.append(f"{cmd} -> {resp}")
+            setup_cmds = ["ATE0", "ATL0", "ATS0", "ATH0", "ATAT1", "ATST64", "ATSP5", "ATSH8110F1", "ATWM8110F13E"]
+            for cmd in setup_cmds:
+                self.enviar_comando_raw(cmd, timeout=1.0)
 
-            Clock.schedule_once(lambda dt: self._atualizar_status("TENTANDO FAST INIT (ATFI) KWP2000...", (1.0, 0.78, 0.2, 1)))
+            Clock.schedule_once(lambda dt: self._atualizar_status("SINCRONIZANDO BARRAMENTO K-LINE...", (1.0, 0.78, 0.2, 1)))
             r_init = self.enviar_comando_raw("ATFI", timeout=3.5)
-            log_hs.append(f"ATFI -> {r_init or 'TIMEOUT'}")
+            log_hs.append(f"Fast Init: {r_init or 'TIMEOUT'}")
 
             if "OK" not in r_init.upper():
-                Clock.schedule_once(lambda dt: self._atualizar_status("ATFI FALHOU, TENTANDO 5-BAUD (ATSP4)...", (1.0, 0.78, 0.2, 1)))
                 self.enviar_comando_raw("ATSP4", timeout=1.0)
                 self.enviar_comando_raw("ATSH8110F1", timeout=1.0)
                 r_init = self.enviar_comando_raw("ATSI", timeout=4.5)
-                log_hs.append(f"ATSI -> {r_init or 'TIMEOUT'}")
+                log_hs.append(f"Slow Init: {r_init or 'TIMEOUT'}")
 
             r_sess = self.enviar_comando_raw("1081", timeout=2.5)
-            log_hs.append(f"1081 -> {r_sess or 'TIMEOUT'}")
+            log_hs.append(f"Sessao KWP: {r_sess or 'TIMEOUT'}")
             r_rpm = self.enviar_comando_raw("2131", timeout=2.0)
-            log_hs.append(f"2131 -> {r_rpm or 'TIMEOUT'}")
+            log_hs.append(f"Teste RPM: {r_rpm or 'TIMEOUT'}")
 
             limpo_rpm = "".join(c for c in r_rpm.upper() if c in "0123456789ABCDEF")
             limpo_sess = "".join(c for c in r_sess.upper() if c in "0123456789ABCDEF")
@@ -171,58 +168,57 @@ class TR4EngineMixin:
 
             self.modo_simulacao = False
             self.rodando = True
-            resumo_ok = "\n".join(log_hs[-5:])
-            Clock.schedule_once(lambda dt: self._sucesso_handshake(resumo_ok))
+            Clock.schedule_once(lambda dt: self._sucesso_handshake())
             self.loop_leitura()
         except Exception as e:
             self.rodando = False
-            log_hs.append(f"EXC: {e}")
-            Clock.schedule_once(lambda dt: self._falha_handshake(f"ERRO K-LINE: {str(e)[:28]}", log_hs))
+            log_hs.append(f"Erro: {e}")
+            Clock.schedule_once(lambda dt: self._falha_handshake("ERRO NA COMUNICACAO K-LINE", log_hs))
 
-    def _sucesso_handshake(self, resumo):
+    def _sucesso_handshake(self):
         self._atualizar_status("ECU CONECTADA | KWP2000 K-LINE ATIVO", (0.2, 0.95, 0.45, 1))
         if hasattr(self, "lbl_eng"):
-            self.lbl_eng.text = f"=== HANDSHAKE KWP2000 OK ===\n{resumo}"
+            self.lbl_eng.text = "ECU conectada com sucesso!\nPronta para leitura de falhas, info ou varredura."
 
     def _falha_handshake(self, titulo, log_hs):
         self.rodando = False
         self._atualizar_status(titulo, (1.0, 0.30, 0.30, 1))
-        detalhes = "\n".join(log_hs[-8:])
+        detalhes = "\n".join(log_hs[-6:])
         if hasattr(self, "lbl_eng"):
-            self.lbl_eng.text = f"=== FALHA CONEXAO ECU ===\n{detalhes}"
-        box = BoxLayout(orientation="vertical", padding=10, spacing=8)
-        lbl = Label(text=f"{titulo}\n\nLog do Scanner / Linha K:\n{detalhes}", font_size="12sp", halign="left", valign="top")
-        lbl.bind(size=lbl.setter("text_size"))
-        box.add_widget(lbl)
-        btn = Button(text="FECHAR", size_hint_y=0.18, background_normal="", background_color=(0.75, 0.22, 0.22, 1), bold=True)
-        pop = Popup(title="Diagnostico de Conexao K-Line", content=box, size_hint=(0.94, 0.72))
-        btn.bind(on_release=pop.dismiss)
-        box.add_widget(btn)
-        pop.open()
+            self.lbl_eng.text = f"{titulo}\n\n{detalhes}"
 
     def _atualizar_status(self, texto, cor):
         self.lbl_status.text = texto
         self.lbl_status.color = cor
 
+    def _limpar_buffer_bt(self):
+        try:
+            while self.bt_in and self.bt_in.available() > 0:
+                self.bt_in.read()
+        except Exception:
+            pass
+
     def enviar_comando_raw(self, cmd, timeout=1.5):
         if not self.bt_out or not self.bt_in:
             return ""
-        try:
-            self.bt_out.write((cmd + "\r").encode("ascii"))
-            self.bt_out.flush()
-            resposta = bytearray()
-            t_limite = time.time() + timeout
-            while time.time() < t_limite:
-                if self.bt_in.available() > 0:
-                    b = self.bt_in.read()
-                    if b == 62:
-                        break
-                    resposta.append(b)
-                else:
-                    time.sleep(0.01)
-            return resposta.decode("ascii", errors="ignore").replace("\r", " ").replace("\n", " ").strip()
-        except Exception:
-            return ""
+        with self.bt_lock:
+            try:
+                self._limpar_buffer_bt()
+                self.bt_out.write((cmd + "\r").encode("ascii"))
+                self.bt_out.flush()
+                resposta = bytearray()
+                t_limite = time.time() + timeout
+                while time.time() < t_limite:
+                    if self.bt_in.available() > 0:
+                        b = self.bt_in.read()
+                        if b == 62:
+                            break
+                        resposta.append(b)
+                    else:
+                        time.sleep(0.01)
+                return resposta.decode("ascii", errors="ignore").replace("\r", " ").replace("\n", " ").strip()
+            except Exception:
+                return ""
     def parse_bytes_kwp(self, resp_str, cmd_enviado):
         limpo = "".join(c for c in resp_str.upper() if c in "0123456789ABCDEF")
         prefixo_ok = "61" + cmd_enviado[2:4].upper()
@@ -266,13 +262,16 @@ class TR4EngineMixin:
                 else:
                     cmd = pid["cmd"]
                     if cmd not in cache_comandos:
-                        raw = self.enviar_comando_raw(cmd)
+                        raw = self.enviar_comando_raw(cmd, timeout=1.2)
                         cache_comandos[cmd] = self.parse_bytes_kwp(raw, cmd)
                     bytes_resp = cache_comandos[cmd]
                     if not bytes_resp:
                         continue
                     valor = pid["calc"](bytes_resp)
                 self._registrar_valor(pid["id"], valor)
+
+            if not self.rodando:
+                break
 
             et_sfs = self.valores_atuais.get("ETANOL_REAL")
             stft_v = self.valores_atuais.get("STFT")
@@ -289,7 +288,7 @@ class TR4EngineMixin:
                 except Exception:
                     pass
             Clock.schedule_once(self.atualizar_interface)
-            time.sleep(0.12 if self.modo_simulacao else 0.04)
+            time.sleep(0.12 if self.modo_simulacao else 0.05)
 
     def atualizar_interface(self, dt):
         for pid_id, widgets in self.cards_ui.items():
@@ -315,6 +314,10 @@ class TR4EngineMixin:
         return getattr(self, "user_data_dir", ".")
 
     def iniciar_gravacao_log(self, *args):
+        if not self.rodando:
+            if hasattr(self, "lbl_log_info"):
+                self.lbl_log_info.text = "Conecte a ECU antes de iniciar o Log!"
+            return
         if self.gravando_log:
             return
         try:
@@ -349,89 +352,85 @@ class TR4EngineMixin:
 
     def ler_info_ecu(self, *args):
         if self.modo_simulacao:
-            self.lbl_eng.text = "INFO ECU (SIMULACAO):\nModelo: IAW4AMS4 (4AM.AR)\nOdometro ECU: 69.412 km\nHardware/SW: 4AMMS"
+            self.lbl_eng.text = "Modelo: IAW4AMHWM44\nCalibracao: 0401BA83\nSoftware: 4AMMS\nOdometro Real: 69.456 km"
             return
-        if not self.bt_out or not self.bt_in:
-            self.lbl_eng.text = "Conecte o Bluetooth primeiro!"
+        if not self.rodando or not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ECU primeiro."
             return
-        estava_rodando = self.rodando
         self.rodando = False
-        time.sleep(0.15)
-        threading.Thread(target=self._ler_info_ecu_thread, args=(estava_rodando,), daemon=True).start()
+        self.lbl_eng.text = "Lendo identificacao e odometro da ECU..."
+        threading.Thread(target=self._ler_info_ecu_thread, daemon=True).start()
 
-    def _ler_info_ecu_thread(self, retomar):
+    def _ler_info_ecu_thread(self):
         def _ascii(b_list):
             return "".join(chr(x) if 32 <= x <= 126 else "" for x in b_list).strip()
-        b80 = self.parse_bytes_kwp(self.enviar_comando_raw("2180"), "2180")
-        b92 = self.parse_bytes_kwp(self.enviar_comando_raw("2192"), "2192")
-        b94 = self.parse_bytes_kwp(self.enviar_comando_raw("2194"), "2194")
-        b96 = self.parse_bytes_kwp(self.enviar_comando_raw("2196"), "2196")
-        b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171"), "2171")
-        odo_txt = "N/D"
+        time.sleep(0.25)
+        b92 = self.parse_bytes_kwp(self.enviar_comando_raw("2192", timeout=1.5), "2192")
+        b94 = self.parse_bytes_kwp(self.enviar_comando_raw("2194", timeout=1.5), "2194")
+        b96 = self.parse_bytes_kwp(self.enviar_comando_raw("2196", timeout=1.5), "2196")
+        b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171", timeout=1.5), "2171")
+        odo_txt = "Nao disponivel"
         if len(b71) >= 3:
             b_o0, b_o1, b_o2 = itemgetter(0, 1, 2)(b71)
             km_val = (b_o0 << 16) | (b_o1 << 8) | b_o2
-            odo_txt = f"{km_val:,} km (HEX: {b_o0:02X} {b_o1:02X} {b_o2:02X})".replace(",", ".")
+            odo_txt = f"{km_val:,} km".replace(",", ".")
         texto = (
-            f"=== IDENTIFICACAO ECU IAW 4AM ===\n"
-            f"ID Geral (2180): {_ascii(b80)}\n"
-            f"Modelo/SW (2192): {_ascii(b92)}\n"
-            f"Serie/Calib (2194): {_ascii(b94)}\n"
-            f"Codigo ECU (2196): {_ascii(b96)}\n"
-            f"Odometro Real ECU (2171): {odo_txt}"
+            f"Modelo ECU: {_ascii(b92) or 'N/D'}\n\n"
+            f"Calibracao: {_ascii(b94) or 'N/D'}\n\n"
+            f"Software: {_ascii(b96) or 'N/D'}\n\n"
+            f"Odometro Real ECU: {odo_txt}"
         )
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", texto))
-        if retomar:
-            self.rodando = True
-            self.loop_leitura()
+        self.rodando = True
+        self.loop_leitura()
 
     def ler_dtcs(self, *args):
         if self.modo_simulacao:
-            self.lbl_eng.text = "Simulacao DTC:\nNenhuma falha ativa (P0000)"
+            self.lbl_eng.text = "Nenhuma falha armazenada na ECU."
             return
-        resp = self.enviar_comando_raw("1800FF00")
-        self.lbl_eng.text = f"Resposta DTC ECU (18 00 FF 00):\n{resp if resp else 'Sem resposta'}"
+        if not self.rodando or not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ECU primeiro."
+            return
+        self.rodando = False
+        self.lbl_eng.text = "Consultando memoria de falhas (DTC)..."
+        threading.Thread(target=self._ler_dtcs_thread, daemon=True).start()
+
+    def _ler_dtcs_thread(self):
+        time.sleep(0.25)
+        resp = self.enviar_comando_raw("1800FF00", timeout=2.0)
+        limpo = "".join(c for c in resp.upper() if c in "0123456789ABCDEF")
+        idx = limpo.find("58")
+        if idx != -1:
+            qtd = int(limpo[idx + 2:idx + 4], 16) if len(limpo) >= idx + 4 else 0
+            if qtd == 0:
+                msg = "Nenhuma falha ativa ou pendente na ECU."
+            else:
+                dados = limpo[idx + 4:]
+                cods = [f"P{dados[i:i+4]}" for i in range(0, len(dados) - 3, 6)]
+                msg = f"Falhas encontradas ({qtd}):\n" + ", ".join(cods)
+        else:
+            msg = f"Retorno da ECU:\n{resp if resp else 'Sem resposta'}"
+        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", msg))
+        self.rodando = True
+        self.loop_leitura()
 
     def apagar_dtcs(self, *args):
         if self.modo_simulacao:
-            self.lbl_eng.text = "Simulacao DTC:\nMemoria de falhas limpa!"
+            self.lbl_eng.text = "Memoria de falhas limpa!"
             return
-        resp = self.enviar_comando_raw("14FF00")
-        self.lbl_eng.text = f"Apagar Falhas (14 FF 00):\n{resp if resp else 'Comando enviado'}"
+        if not self.rodando or not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ECU primeiro."
+            return
+        self.rodando = False
+        threading.Thread(target=self._apagar_dtcs_thread, daemon=True).start()
+
+    def _apagar_dtcs_thread(self):
+        time.sleep(0.25)
+        resp = self.enviar_comando_raw("14FF00", timeout=2.0)
+        msg = "Falhas apagadas com sucesso!" if "54" in resp.upper() else f"Comando enviado ({resp})"
+        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", msg))
+        self.rodando = True
+        self.loop_leitura()
 
     def desconectar_ecu(self, *args):
         self.rodando = False
-        self.modo_simulacao = False
-        self.parar_gravacao_log()
-        if self.bt_socket:
-            self.lbl_status.text = "ECU DESCONECTADA | BLUETOOTH ATIVO"
-            self.lbl_status.color = (0.3, 0.85, 1.0, 1)
-        else:
-            self.lbl_status.text = "DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)"
-            self.lbl_status.color = (1, 0.78, 0.2, 1)
-
-    def iniciar_varredura_ecu(self, *args):
-        if self.modo_simulacao:
-            self.lbl_eng.text = "Simulacao Varredura:\n2131: 03 0C (RPM)\n213B: 80 (ECT)\n2147: 9C (STFT)"
-            return
-        if not self.bt_out or not self.bt_in:
-            self.lbl_eng.text = "Conecte o Bluetooth primeiro!"
-            return
-        self.rodando = False
-        time.sleep(0.15)
-        threading.Thread(target=self._executar_varredura_thread, daemon=True).start()
-
-    def _executar_varredura_thread(self):
-        pasta = self._obter_pasta_gravacao()
-        nome_arq = os.path.join(pasta, f"MAPA_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-        encontrados = []
-        for code in range(0x00, 0x100):
-            cmd = f"21{code:02X}"
-            if code % 16 == 0:
-                Clock.schedule_once(lambda dt, c=cmd, n=len(encontrados): setattr(self.lbl_eng, "text", f"Varrendo {c} / 21FF...\nAtivos encontrados: {n}"))
-            resp = self.enviar_comando_raw(cmd)
-            limpo = "".join(c for c in resp.upper() if c in "0123456789ABCDEF")
-            prefixo_ok = f"61{code:02X}"
-            idx = limpo.find(prefixo_ok)
-            if idx != -1:
-                dados = limpo[idx + 4:]
