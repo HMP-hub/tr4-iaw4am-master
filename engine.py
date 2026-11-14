@@ -117,7 +117,7 @@ class TR4EngineMixin:
             self.bt_in = None
             self.bt_out = None
             Clock.schedule_once(lambda dt, err=str(e): self._atualizar_status(f"FALHA SOCKET BT: {err[:34]}", (1.0, 0.35, 0.35, 1)))
-    def conectar_ecu(self, *args):
+            def conectar_ecu(self, *args):
         if self.rodando and not self.modo_simulacao:
             self.lbl_status.text = "ECU IAW 4AM JA CONECTADA"
             return
@@ -201,24 +201,29 @@ class TR4EngineMixin:
     def enviar_comando_raw(self, cmd, timeout=1.5):
         if not self.bt_out or not self.bt_in:
             return ""
-        with self.bt_lock:
-            try:
-                self._limpar_buffer_bt()
-                self.bt_out.write((cmd + "\r").encode("ascii"))
-                self.bt_out.flush()
-                resposta = bytearray()
-                t_limite = time.time() + timeout
-                while time.time() < t_limite:
-                    if self.bt_in.available() > 0:
-                        b = self.bt_in.read()
-                        if b == 62:
-                            break
-                        resposta.append(b)
-                    else:
-                        time.sleep(0.01)
-                return resposta.decode("ascii", errors="ignore").replace("\r", " ").replace("\n", " ").strip()
-            except Exception:
-                return ""
+        lock = getattr(self, "bt_lock", None)
+        if lock:
+            lock.acquire()
+        try:
+            self._limpar_buffer_bt()
+            self.bt_out.write((cmd + "\r").encode("ascii"))
+            self.bt_out.flush()
+            resposta = bytearray()
+            t_limite = time.time() + timeout
+            while time.time() < t_limite:
+                if self.bt_in.available() > 0:
+                    b = self.bt_in.read()
+                    if b == 62:
+                        break
+                    resposta.append(b)
+                else:
+                    time.sleep(0.01)
+            return resposta.decode("ascii", errors="ignore").replace("\r", " ").replace("\n", " ").strip()
+        except Exception:
+            return ""
+        finally:
+            if lock:
+                lock.release()
 
     def parse_bytes_kwp(self, resp_str, cmd_enviado):
         limpo = "".join(c for c in resp_str.upper() if c in "0123456789ABCDEF")
@@ -245,6 +250,7 @@ class TR4EngineMixin:
                 self.valores_min[pid_id] = val
                 self.valores_max[pid_id] = val
         self.atualizar_interface(0)
+
     def loop_leitura(self):
         t0 = time.time()
         while self.rodando:
@@ -303,8 +309,7 @@ class TR4EngineMixin:
                 val = self.valores_atuais.get(self.pids_graf[idx])
                 if isinstance(val, (int, float)):
                     graf.adicionar_ponto(val)
-
-    def _obter_pasta_gravacao(self):
+                    def _obter_pasta_gravacao(self):
         pasta_dl = "/sdcard/Download"
         try:
             if os.path.exists(pasta_dl) and os.access(pasta_dl, os.W_OK):
@@ -458,6 +463,24 @@ class TR4EngineMixin:
             self.lbl_status.color = (1, 0.78, 0.2, 1)
 
     def iniciar_varredura_ecu(self, *args):
+        if getattr(self, "varrendo", False):
+            return
+        if self.modo_simulacao:
+            self.lbl_eng.text = "Simulacao: 2131, 213B, 2147 ativos."
+            return
+        if not self.rodando or not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ECU primeiro."
+            return
+        self.rodando = False
+        self.varrendo = True
+        self.lbl_eng.text = "Iniciando varredura completa da ECU..."
+        threading.Thread(target=self._executar_varredura_thread, daemon=True).start()
+
+    def parar_varredura_ecu(self, *args):
+        if getattr(self, "varrendo", False):
+            self.varrendo = False
+            self.lbl_eng.text = "Parando varredura e salvando parcial..."
+
     def _executar_varredura_thread(self):
         time.sleep(0.35)
         pasta = self._obter_pasta_gravacao()
