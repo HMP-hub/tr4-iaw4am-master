@@ -48,11 +48,11 @@ PIDS_DB = [
         "id": "IAT",
         "nome": "Temperatura Ar (IAT)",
         "unidade": "C",
-        "cmd": "21A2",
+        "cmd": "21A4",
         "rapido": True,
         "min": 0,
         "max": 100,
-        "calc": lambda b: float(_u16(b, 6)) if _u16(b, 6) is not None else 0.0,
+        "calc": lambda b: float(_u16(b, 4)) if _u16(b, 4) is not None else 0.0,
         "sim": lambda t: round(42.0 + 2.0 * math.sin(t * 0.15), 1),
     },
     {
