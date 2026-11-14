@@ -67,7 +67,7 @@ class TR4MonitorApp(App, TR4EngineMixin):
         self.arquivo_log = None
         self.writer_log = None
         self.inicio_log_ts = 0.0
-        self.pid_grafico_id = "STFT"
+        self.pids_graf = ["STFT", "SONDA_PRE", "MAP_KPA"]
         self.cards_ui = {}
         self.nav_botoes = {}
 
@@ -99,7 +99,6 @@ class TR4MonitorApp(App, TR4EngineMixin):
         for nome, btn in self.nav_botoes.items():
             btn.background_color = (0.12, 0.55, 0.75, 1) if nome == nome_ativa else (0.24, 0.30, 0.38, 1)
         fn()
-
     def limpar_area_central(self):
         self.area_central.clear_widgets()
         self.cards_ui = {}
@@ -162,25 +161,31 @@ class TR4MonitorApp(App, TR4EngineMixin):
 
     def mostrar_aba_grafico(self, *args):
         self.limpar_area_central()
-        box = BoxLayout(orientation="vertical", spacing=6)
-        topo = GridLayout(cols=5, size_hint_y=0.18, spacing=4)
-        for pid_id, rotulo in [("STFT", "STFT"), ("RPM", "RPM"), ("SONDA_PRE", "SONDA"), ("TI_PRINCIPAL", "INJECAO"), ("AVANCO_IGN", "AVANCO"), ("MAP_KPA", "MAP"), ("TPS_PCT", "TPS"), ("TEMP_AGUA", "AGUA"), ("ETANOL_INST", "ETANOL"), ("BATERIA_V", "BATERIA")]:
-            b = Button(text=rotulo, font_size="10sp", bold=True, background_normal="", background_color=(0.24, 0.30, 0.38, 1))
-            b.bind(on_release=lambda x, p=pid_id: self.mudar_pid_grafico(p))
-            topo.add_widget(b)
-        box.add_widget(topo)
-        self.lbl_titulo_graf = Label(text=f"Grafico Ao Vivo: {self.pid_grafico_id}", size_hint_y=0.07, bold=True)
-        box.add_widget(self.lbl_titulo_graf)
-        self.grafico_widget = GraficoTempoReal(size_hint_y=0.75)
-        box.add_widget(self.grafico_widget)
+        self.graficos_lista = []
+        self.labels_graf_lista = []
+        opcoes = [("STFT", "STFT"), ("SONDA_PRE", "SONDA1"), ("SONDA_POS", "SONDA2"), ("MAP_KPA", "MAP"), ("TI_PRINCIPAL", "INJ"), ("AVANCO_IGN", "IGN"), ("RPM", "RPM"), ("TPS_PCT", "TPS")]
+        box = BoxLayout(orientation="vertical", spacing=4)
+        for idx in range(3):
+            linha_btn = BoxLayout(size_hint_y=0.08, spacing=2)
+            for pid_id, rot in opcoes:
+                b = Button(text=rot, font_size="9sp", bold=True, background_normal="", background_color=(0.22, 0.28, 0.36, 1))
+                b.bind(on_release=lambda x, i=idx, p=pid_id: self.mudar_pid_grafico(i, p))
+                linha_btn.add_widget(b)
+            lbl = Label(text=f"Canal {idx+1}: {self.pids_graf[idx]}", size_hint_y=0.05, font_size="11sp", bold=True, color=(0.3, 0.9, 0.6, 1))
+            graf = GraficoTempoReal(size_hint_y=0.20)
+            box.add_widget(linha_btn)
+            box.add_widget(lbl)
+            box.add_widget(graf)
+            self.labels_graf_lista.append(lbl)
+            self.graficos_lista.append(graf)
         self.area_central.add_widget(box)
 
-    def mudar_pid_grafico(self, pid_id):
-        self.pid_grafico_id = pid_id
-        if hasattr(self, "grafico_widget"):
-            self.grafico_widget.dados.clear()
-        if hasattr(self, "lbl_titulo_graf"):
-            self.lbl_titulo_graf.text = f"Grafico Ao Vivo: {pid_id}"
+    def mudar_pid_grafico(self, idx, pid_id):
+        self.pids_graf[idx] = pid_id
+        if hasattr(self, "graficos_lista") and idx < len(self.graficos_lista):
+            self.graficos_lista[idx].dados.clear()
+        if hasattr(self, "labels_graf_lista") and idx < len(self.labels_graf_lista):
+            self.labels_graf_lista[idx].text = f"Canal {idx+1}: {pid_id}"
 
     def mostrar_aba_log(self, *args):
         self.limpar_area_central()
