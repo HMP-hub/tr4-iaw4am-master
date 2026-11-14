@@ -105,7 +105,7 @@ class TR4ScannerApp(TR4EngineMixin, App):
         raiz = BoxLayout(orientation="vertical", padding=6, spacing=6)
 
         self.lbl_status = Label(
-            text="DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)",
+            text="DESCONECTADO | ECU: IAW 4AM",
             size_hint_y=0.055,
             bold=True,
             color=(1, 0.78, 0.2, 1),
@@ -230,16 +230,21 @@ class TR4ScannerApp(TR4EngineMixin, App):
         box.add_widget(barra_presets)
 
         scroll = ScrollView(size_hint_y=0.92)
-        grid = GridLayout(cols=1, spacing=4, size_hint_y=None)
+        grid = GridLayout(cols=1, spacing=6, size_hint_y=None, padding=(2, 4))
         grid.bind(minimum_height=grid.setter("height"))
         for pid in PIDS_DB:
             tb = ToggleButton(
-                text=f"{pid['nome']}  [{pid['cmd']}]",
+                text=pid["nome"],
                 size_hint_y=None,
-                height=48,
+                height=52,
                 state="down" if self.selecionados[pid["id"]] else "normal",
-                font_size="13sp",
+                font_size="14sp",
+                bold=True,
+                halign="left",
+                valign="middle",
+                padding=(16, 0),
             )
+            tb.bind(size=tb.setter("text_size"))
             tb.bind(state=lambda inst, st, pid_id=pid["id"]: self._toggle_pid(pid_id, st))
             self.checks_pids_ui[pid["id"]] = tb
             grid.add_widget(tb)
@@ -277,12 +282,14 @@ class TR4ScannerApp(TR4EngineMixin, App):
     def _criar_tela_log(self):
         box = BoxLayout(orientation="vertical", spacing=6, padding=4)
         self.lbl_log_info = Label(
-            text="Selecione abaixo os PIDs que serao gravados no CSV:\n(Pasta de destino: /sdcard/Download/)",
-            size_hint_y=0.14,
-            font_size="12sp",
+            text="Selecione abaixo os PIDs que serao gravados no CSV:",
+            size_hint_y=0.10,
+            font_size="13sp",
             color=(0.85, 0.90, 0.96, 1),
-            halign="center",
+            halign="left",
+            valign="middle",
         )
+        self.lbl_log_info.bind(size=self.lbl_log_info.setter("text_size"))
         box.add_widget(self.lbl_log_info)
 
         barra_sel_log = BoxLayout(size_hint_y=0.075, spacing=5)
@@ -297,17 +304,22 @@ class TR4ScannerApp(TR4EngineMixin, App):
         barra_sel_log.add_widget(b_log_clr)
         box.add_widget(barra_sel_log)
 
-        scroll = ScrollView(size_hint_y=0.675)
-        grid = GridLayout(cols=1, spacing=4, size_hint_y=None)
+        scroll = ScrollView(size_hint_y=0.715)
+        grid = GridLayout(cols=1, spacing=6, size_hint_y=None, padding=(2, 4))
         grid.bind(minimum_height=grid.setter("height"))
         for pid in PIDS_DB:
             tb = ToggleButton(
-                text=f"[CSV] {pid['nome']} ({pid['unidade']})",
+                text=pid["nome"],
                 size_hint_y=None,
-                height=44,
+                height=50,
                 state="down" if self.selecionados_log[pid["id"]] else "normal",
-                font_size="12sp",
+                font_size="14sp",
+                bold=True,
+                halign="left",
+                valign="middle",
+                padding=(16, 0),
             )
+            tb.bind(size=tb.setter("text_size"))
             tb.bind(state=lambda inst, st, pid_id=pid["id"]: self._toggle_pid_log(pid_id, st))
             self.checks_log_ui[pid["id"]] = tb
             grid.add_widget(tb)
@@ -343,19 +355,20 @@ class TR4ScannerApp(TR4EngineMixin, App):
             self.checks_log_ui[pid_id].state = "down" if ativo else "normal"
 
     def _criar_tela_engenharia(self):
-        box = BoxLayout(orientation="vertical", spacing=8, padding=6)
+        box = BoxLayout(orientation="vertical", spacing=10, padding=8)
         self.lbl_eng = Label(
             text="Diagnostico Avancado KWP2000 - ECU IAW 4AM\nSelecione uma operacao abaixo:",
-            size_hint_y=0.46,
-            font_size="14sp",
+            size_hint_y=0.48,
+            font_size="15sp",
+            line_height=1.35,
             halign="left",
             valign="top",
-            color=(0.85, 0.90, 0.96, 1),
+            color=(0.88, 0.92, 0.98, 1),
         )
         self.lbl_eng.bind(size=self.lbl_eng.setter("text_size"))
         box.add_widget(self.lbl_eng)
 
-        linha_dtc = BoxLayout(size_hint_y=0.18, spacing=6)
+        linha_dtc = BoxLayout(size_hint_y=0.17, spacing=6)
         b_ler_dtc = Button(text="LER FALHAS (DTC)", background_normal="", background_color=(0.14, 0.45, 0.78, 1), bold=True, font_size="13sp")
         b_ler_dtc.bind(on_release=self.ler_dtcs)
         b_apg_dtc = Button(text="APAGAR FALHAS", background_normal="", background_color=(0.80, 0.35, 0.12, 1), bold=True, font_size="13sp")
@@ -364,11 +377,11 @@ class TR4ScannerApp(TR4EngineMixin, App):
         linha_dtc.add_widget(b_apg_dtc)
         box.add_widget(linha_dtc)
 
-        b_info = Button(text="INFO COMPLETA ECU E ODOMETRO", size_hint_y=0.18, background_normal="", background_color=(0.35, 0.25, 0.65, 1), bold=True, font_size="13sp")
+        b_info = Button(text="INFO COMPLETA ECU E ODOMETRO", size_hint_y=0.17, background_normal="", background_color=(0.35, 0.25, 0.65, 1), bold=True, font_size="13sp")
         b_info.bind(on_release=self.ler_info_ecu)
         box.add_widget(b_info)
 
-        linha_varrer = BoxLayout(size_hint_y=0.18, spacing=6)
+        linha_varrer = BoxLayout(size_hint_y=0.17, spacing=6)
         b_varrer = Button(text="VARRER ECU", background_normal="", background_color=(0.15, 0.55, 0.40, 1), bold=True, font_size="13sp")
         b_varrer.bind(on_release=self.iniciar_varredura_ecu)
         b_parar_varrer = Button(text="PARAR VARREDURA", background_normal="", background_color=(0.75, 0.22, 0.22, 1), bold=True, font_size="13sp")
