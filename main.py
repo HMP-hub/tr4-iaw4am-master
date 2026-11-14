@@ -63,6 +63,8 @@ class TR4MonitorApp(App, TR4EngineMixin):
         self.selecionados = {p["id"]: p["rapido"] for p in PIDS_DB}
         self.selecionados_log = {p["id"]: p["rapido"] for p in PIDS_DB}
         self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
+        self.valores_min = {}
+        self.valores_max = {}
         self.gravando_log = False
         self.arquivo_log = None
         self.writer_log = None
@@ -128,26 +130,38 @@ class TR4MonitorApp(App, TR4EngineMixin):
 
     def mostrar_aba_painel(self, *args):
         self.limpar_area_central()
-        scroll = ScrollView()
-        colunas = 4 if Window.width > Window.height else 2
-        grid = GridLayout(cols=colunas, spacing=6, size_hint_y=None, padding=(2, 4))
+        box = BoxLayout(orientation="vertical", spacing=6)
+        barra_mm = BoxLayout(size_hint_y=0.07, spacing=6)
+        btn_zerar = Button(text="ZERAR MIN / MAX", font_size="11sp", bold=True, background_normal="", background_color=(0.25, 0.32, 0.42, 1))
+        btn_zerar.bind(on_release=self.zerar_min_max)
+        barra_mm.add_widget(btn_zerar)
+        box.add_widget(barra_mm)
+
+        scroll = ScrollView(size_hint_y=0.93)
+        colunas = 3 if Window.width > Window.height else 2
+        grid = GridLayout(cols=colunas, spacing=10, size_hint_y=None, padding=(4, 6))
         grid.bind(minimum_height=grid.setter("height"))
         for pid in PIDS_DB:
             if not self.selecionados.get(pid["id"], False):
                 continue
-            card = BoxLayout(orientation="vertical", size_hint_y=None, height=82, padding=6)
+            card = BoxLayout(orientation="vertical", size_hint_y=None, height=118, padding=(8, 6), spacing=2)
             with card.canvas.before:
                 Color(0.13, 0.16, 0.21, 1)
                 rect = Rectangle(pos=card.pos, size=card.size)
             card.bind(pos=lambda inst, v, r=rect: setattr(r, "pos", v), size=lambda inst, v, r=rect: setattr(r, "size", v))
-            lbl_nome = Label(text=pid["nome"], font_size="11sp", color=(0.75, 0.80, 0.88, 1), size_hint_y=0.35)
-            lbl_val = Label(text=f"{self.valores_atuais.get(pid['id'], '--')} {pid['unidade']}", font_size="17sp", bold=True, color=(0.15, 0.90, 0.50, 1), size_hint_y=0.65)
+            lbl_nome = Label(text=pid["nome"], font_size="12sp", bold=True, color=(0.78, 0.84, 0.92, 1), size_hint_y=0.28)
+            lbl_val = Label(text=f"{self.valores_atuais.get(pid['id'], '--')} {pid['unidade']}", font_size="19sp", bold=True, color=(0.15, 0.92, 0.52, 1), size_hint_y=0.44)
+            vmin = self.valores_min.get(pid["id"], "--")
+            vmax = self.valores_max.get(pid["id"], "--")
+            lbl_mm = Label(text=f"MIN: {vmin}   |   MAX: {vmax}", font_size="11sp", color=(0.60, 0.78, 0.98, 1), size_hint_y=0.28)
             card.add_widget(lbl_nome)
             card.add_widget(lbl_val)
+            card.add_widget(lbl_mm)
             grid.add_widget(card)
-            self.cards_ui[pid["id"]] = (lbl_val, pid["unidade"])
+            self.cards_ui[pid["id"]] = (lbl_val, lbl_mm, pid["unidade"])
         scroll.add_widget(grid)
-        self.area_central.add_widget(scroll)
+        box.add_widget(scroll)
+        self.area_central.add_widget(box)
 
     def mostrar_aba_seletor(self, *args):
         self.limpar_area_central()
@@ -159,11 +173,11 @@ class TR4MonitorApp(App, TR4EngineMixin):
             acoes.add_widget(b)
         box.add_widget(acoes)
         scroll = ScrollView()
-        lista = GridLayout(cols=1, spacing=6, size_hint_y=None, padding=(2, 4))
+        lista = GridLayout(cols=1, spacing=8, size_hint_y=None, padding=(2, 4))
         lista.bind(minimum_height=lista.setter("height"))
         self.btns_pid_ui = {}
         for pid in PIDS_DB:
-            btn = Button(size_hint_y=None, height=54, font_size="12sp", bold=True, background_normal="", halign="left", valign="middle", padding=(12, 0))
+            btn = Button(size_hint_y=None, height=62, font_size="13sp", bold=True, background_normal="", halign="left", valign="middle", padding=(14, 0))
             btn.bind(size=btn.setter("text_size"))
             self._estilo_btn_pid(btn, pid, self.selecionados.get(pid["id"], False), True)
             btn.bind(on_release=lambda inst, p=pid: self._alternar_pid_painel(inst, p))
@@ -228,11 +242,11 @@ class TR4MonitorApp(App, TR4EngineMixin):
             acoes.add_widget(b)
         box.add_widget(acoes)
         scroll = ScrollView(size_hint_y=0.72)
-        lista = GridLayout(cols=1, spacing=6, size_hint_y=None, padding=(2, 4))
+        lista = GridLayout(cols=1, spacing=8, size_hint_y=None, padding=(2, 4))
         lista.bind(minimum_height=lista.setter("height"))
         self.btns_log_ui = {}
         for pid in PIDS_DB:
-            btn = Button(size_hint_y=None, height=50, font_size="12sp", bold=True, background_normal="", halign="left", valign="middle", padding=(12, 0))
+            btn = Button(size_hint_y=None, height=60, font_size="13sp", bold=True, background_normal="", halign="left", valign="middle", padding=(14, 0))
             btn.bind(size=btn.setter("text_size"))
             self._estilo_btn_pid(btn, pid, self.selecionados_log.get(pid["id"], False), False)
             btn.bind(on_release=lambda inst, p=pid: self._alternar_pid_log(inst, p))
@@ -253,17 +267,21 @@ class TR4MonitorApp(App, TR4EngineMixin):
     def mostrar_aba_engenharia(self, *args):
         self.limpar_area_central()
         box = BoxLayout(orientation="vertical", spacing=8, padding=8)
-        self.lbl_eng = Label(text="Modulo de Engenharia IAW 4AM.AR (SW 4AMMS)\nSessao Estendida KWP2000 (10 81)", font_size="12sp", size_hint_y=0.55)
+        self.lbl_eng = Label(text="Modulo de Engenharia IAW 4AM.AR (SW 4AMMS)\nSessao Estendida KWP2000 (10 81)", font_size="12sp", size_hint_y=0.45, halign="left", valign="middle")
+        self.lbl_eng.bind(size=self.lbl_eng.setter("text_size"))
         box.add_widget(self.lbl_eng)
-        botoes = BoxLayout(size_hint_y=0.20, spacing=8)
+        botoes1 = BoxLayout(size_hint_y=0.17, spacing=8)
         b_dtc = Button(text="LER FALHAS (DTC)", background_normal="", background_color=(0.15, 0.50, 0.80, 1), bold=True)
         b_dtc.bind(on_release=self.ler_dtcs)
         b_clear = Button(text="APAGAR FALHAS", background_normal="", background_color=(0.80, 0.40, 0.12, 1), bold=True)
         b_clear.bind(on_release=self.apagar_dtcs)
-        botoes.add_widget(b_dtc)
-        botoes.add_widget(b_clear)
-        box.add_widget(botoes)
-        b_scan = Button(text="VARRER ECU (2100 - 21FF) E SALVAR MAPA", size_hint_y=0.18, background_normal="", background_color=(0.20, 0.62, 0.45, 1), bold=True)
+        botoes1.add_widget(b_dtc)
+        botoes1.add_widget(b_clear)
+        box.add_widget(botoes1)
+        b_info = Button(text="INFO ECU & ODOMETRO REAL (2180 / 2171)", size_hint_y=0.17, background_normal="", background_color=(0.38, 0.30, 0.72, 1), bold=True)
+        b_info.bind(on_release=self.ler_info_ecu)
+        box.add_widget(b_info)
+        b_scan = Button(text="VARRER ECU (2100 - 21FF) E SALVAR MAPA", size_hint_y=0.17, background_normal="", background_color=(0.20, 0.62, 0.45, 1), bold=True)
         b_scan.bind(on_release=self.iniciar_varredura_ecu)
         box.add_widget(b_scan)
         self.area_central.add_widget(box)
