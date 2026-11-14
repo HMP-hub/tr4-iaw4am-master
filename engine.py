@@ -10,16 +10,20 @@ from pids import PIDS_DB
 
 class TR4EngineMixin:
     def iniciar_simulacao(self, *args):
-        self.parar_conexao()
+        self.desconectar_ecu()
         self.modo_simulacao = True
         self.rodando = True
-        self.lbl_status.text = "MODO SIMULACAO ATIVO | IAW 4AM.AR"
+        self.lbl_status.text = "SIMULACAO ATIVA | ECU: IAW 4AM.AR"
         self.lbl_status.color = (0.3, 0.9, 0.5, 1)
         threading.Thread(target=self.loop_leitura, daemon=True).start()
 
-    def iniciar_bluetooth(self, *args):
-        self.parar_conexao()
-        self.lbl_status.text = "CONECTANDO AO OBDLINK MX+..."
+    def conectar_bluetooth(self, *args):
+        if self.bt_socket and self.bt_in and self.bt_out:
+            self.lbl_status.text = "BLUETOOTH JA CONECTADO | PRONTO P/ ECU"
+            self.lbl_status.color = (0.3, 0.85, 1.0, 1)
+            return
+        self.lbl_status.text = "CONECTANDO BLUETOOTH AO SCANNER..."
+        self.lbl_status.color = (1.0, 0.78, 0.2, 1)
         threading.Thread(target=self._conectar_bt_thread, daemon=True).start()
 
     def _conectar_bt_thread(self):
@@ -29,7 +33,7 @@ class TR4EngineMixin:
             UUID = autoclass("java.util.UUID")
             adapter = BluetoothAdapter.getDefaultAdapter()
             if not adapter or not adapter.isEnabled():
-                Clock.schedule_once(lambda dt: setattr(self.lbl_status, "text", "ERRO: LIGUE O BLUETOOTH"))
+                Clock.schedule_once(lambda dt: setattr(self.lbl_status, "text", "ERRO: LIGUE O BLUETOOTH DO CELULAR"))
                 return
             spp_uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
             dispositivo_alvo = None
@@ -39,22 +43,49 @@ class TR4EngineMixin:
                     dispositivo_alvo = dev
                     break
             if not dispositivo_alvo:
-                Clock.schedule_once(lambda dt: setattr(self.lbl_status, "text", "OBDLINK MX+ NAO PAREADO"))
+                Clock.schedule_once(lambda dt: setattr(self.lbl_status, "text", "SCANNER OBD NAO PAREADO NO ANDROID"))
                 return
             self.bt_socket = dispositivo_alvo.createRfcommSocketToServiceRecord(spp_uuid)
             adapter.cancelDiscovery()
             self.bt_socket.connect()
             self.bt_in = self.bt_socket.getInputStream()
             self.bt_out = self.bt_socket.getOutputStream()
+            nome_dev = dispositivo_alvo.getName()
+            Clock.schedule_once(lambda dt: self._atualizar_status(f"BT OK ({nome_dev}) | CLIQUE EM CONECTAR ECU", (0.3, 0.85, 1.0, 1)))
+        except Exception as e:
+            self.bt_socket = None
+            self.bt_in = None
+            self.bt_out = None
+            Clock.schedule_once(lambda dt, err=str(e): self._atualizar_status(f"FALHA BT: {err[:36]}", (1.0, 0.35, 0.35, 1)))
+
+    def conectar_ecu(self, *args):
+        if self.rodando and not self.modo_simulacao:
+            self.lbl_status.text = "ECU IAW 4AM JA CONECTADA"
+            return
+        if not self.bt_socket or not self.bt_in or not self.bt_out:
+            self.lbl_status.text = "ERRO: FACA A CONEXAO BLUETOOTH PRIMEIRO!"
+            self.lbl_status.color = (1.0, 0.35, 0.35, 1)
+            return
+        self.lbl_status.text = "INICIANDO SESSAO KWP2000 NA ECU..."
+        self.lbl_status.color = (1.0, 0.78, 0.2, 1)
+        threading.Thread(target=self._conectar_ecu_thread, daemon=True).start()
+
+    def _conectar_ecu_thread(self):
+        try:
             for cmd in ["ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP5", "ATSH8110F1", "ATFI", "1081"]:
                 self.enviar_comando_raw(cmd)
                 time.sleep(0.15)
             self.modo_simulacao = False
             self.rodando = True
-            Clock.schedule_once(lambda dt: setattr(self.lbl_status, "text", f"CONECTADO: {dispositivo_alvo.getName()} | IAW 4AM"))
+            Clock.schedule_once(lambda dt: self._atualizar_status("ECU CONECTADA | IAW 4AM.AR (4AMMS)", (0.2, 0.95, 0.45, 1)))
             self.loop_leitura()
         except Exception as e:
-            Clock.schedule_once(lambda dt, err=str(e): setattr(self.lbl_status, "text", f"FALHA BT: {err[:38]}"))
+            self.rodando = False
+            Clock.schedule_once(lambda dt, err=str(e): self._atualizar_status(f"FALHA ECU: {err[:35]}", (1.0, 0.35, 0.35, 1)))
+
+    def _atualizar_status(self, texto, cor):
+        self.lbl_status.text = texto
+        self.lbl_status.color = cor
 
     def enviar_comando_raw(self, cmd):
         if not self.bt_out or not self.bt_in:
@@ -161,7 +192,7 @@ class TR4EngineMixin:
         if self.gravando_log:
             return
         try:
-            sel_log = getattr(self, "selecionados_log", {p["id"]: p["rapido"] for p in PIDS_DB})
+            sel_log = getattr(self, "selecionados_log", {})
             self.pids_gravando_lista = [p["id"] for p in PIDS_DB if sel_log.get(p["id"], False)]
             if not self.pids_gravando_lista:
                 self.pids_gravando_lista = [p["id"] for p in PIDS_DB if p["rapido"]]
@@ -195,7 +226,7 @@ class TR4EngineMixin:
             self.lbl_eng.text = "INFO ECU (SIMULACAO):\nModelo: IAW4AMS4 (4AM.AR)\nOdometro ECU: 69.412 km\nHardware/SW: 4AMMS"
             return
         if not self.bt_out or not self.bt_in:
-            self.lbl_eng.text = "Conecte ao OBDLink MX+ primeiro!"
+            self.lbl_eng.text = "Conecte o Bluetooth primeiro!"
             return
         estava_rodando = self.rodando
         self.rodando = False
@@ -212,8 +243,8 @@ class TR4EngineMixin:
         b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171"), "2171")
         odo_txt = "N/D"
         if len(b71) >= 3:
-            km_val = (b71[0] << 16) | (b71[1] << 8) | b71[2]
-            odo_txt = f"{km_val:,} km (HEX: {b71[0]:02X} {b71[1]:02X} {b71[2]:02X})".replace(",", ".")
+            km_val = (b71 << 16) | (b71 << 8) | b71
+            odo_txt = f"{km_val:,} km (HEX: {b71:02X} {b71:02X} {b71:02X})".replace(",", ".")
         texto = (
             f"=== IDENTIFICACAO ECU IAW 4AM ===\n"
             f"ID Geral (2180): {_ascii(b80)}\n"
@@ -241,25 +272,23 @@ class TR4EngineMixin:
         resp = self.enviar_comando_raw("14FF00")
         self.lbl_eng.text = f"Apagar Falhas (14 FF 00):\n{resp if resp else 'Comando enviado'}"
 
-    def parar_conexao(self, *args):
+    def desconectar_ecu(self, *args):
         self.rodando = False
         self.modo_simulacao = False
         self.parar_gravacao_log()
         if self.bt_socket:
-            try:
-                self.bt_socket.close()
-            except Exception:
-                pass
-            self.bt_socket = None
-        self.lbl_status.text = "DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)"
-        self.lbl_status.color = (1, 0.78, 0.2, 1)
+            self.lbl_status.text = "ECU DESCONECTADA | BLUETOOTH ATIVO"
+            self.lbl_status.color = (0.3, 0.85, 1.0, 1)
+        else:
+            self.lbl_status.text = "DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)"
+            self.lbl_status.color = (1, 0.78, 0.2, 1)
 
     def iniciar_varredura_ecu(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = "Simulacao Varredura:\n2131: 03 0C (RPM)\n213B: 80 (ECT)\n2147: A2 (STFT)"
             return
         if not self.bt_out or not self.bt_in:
-            self.lbl_eng.text = "Conecte ao OBDLink MX+ primeiro!"
+            self.lbl_eng.text = "Conecte o Bluetooth primeiro!"
             return
         self.rodando = False
         time.sleep(0.15)
