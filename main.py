@@ -202,12 +202,12 @@ class TR4MonitorApp(App, TR4EngineMixin):
         box.add_widget(botoes)
         self.area_central.add_widget(box)
 
-    def mostrar_aba_engenharia(self, *args):
+        def mostrar_aba_engenharia(self, *args):
         self.limpar_area_central()
         box = BoxLayout(orientation="vertical", spacing=8, padding=8)
-        self.lbl_eng = Label(text="Modulo de Engenharia IAW 4AM.AR (SW 4AMMS)\nSessao Estendida KWP2000 (10 81)", size_hint_y=0.55)
+        self.lbl_eng = Label(text="Modulo de Engenharia IAW 4AM.AR (SW 4AMMS)\nSessao Estendida KWP2000 (10 81)", font_size="12sp", size_hint_y=0.55)
         box.add_widget(self.lbl_eng)
-        botoes = BoxLayout(size_hint_y=0.25, spacing=8)
+        botoes = BoxLayout(size_hint_y=0.20, spacing=8)
         b_dtc = Button(text="LER FALHAS (DTC)", background_normal="", background_color=(0.15, 0.50, 0.80, 1), bold=True)
         b_dtc.bind(on_release=self.ler_dtcs)
         b_clear = Button(text="APAGAR FALHAS", background_normal="", background_color=(0.80, 0.40, 0.12, 1), bold=True)
@@ -215,6 +215,9 @@ class TR4MonitorApp(App, TR4EngineMixin):
         botoes.add_widget(b_dtc)
         botoes.add_widget(b_clear)
         box.add_widget(botoes)
+        b_scan = Button(text="VARRER ECU (2100 - 21FF) E SALVAR MAPA", size_hint_y=0.18, background_normal="", background_color=(0.20, 0.62, 0.45, 1), bold=True)
+        b_scan.bind(on_release=self.iniciar_varredura_ecu)
+        box.add_widget(b_scan)
         self.area_central.add_widget(box)
 
 
