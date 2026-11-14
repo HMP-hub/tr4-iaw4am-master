@@ -1,4 +1,5 @@
 # coding: utf-8
+import threading
 import traceback
 from kivy.app import App
 from kivy.core.window import Window
@@ -56,7 +57,9 @@ class GraficoTempoReal(Widget):
 class TR4MonitorApp(App, TR4EngineMixin):
     def build(self):
         self.title = "TR4 IAW4AM Master"
+        self.bt_lock = threading.Lock()
         self.rodando = False
+        self.varrendo = False
         self.modo_simulacao = False
         self.bt_socket = None
         self.bt_in = None
@@ -272,24 +275,36 @@ class TR4MonitorApp(App, TR4EngineMixin):
 
     def mostrar_aba_engenharia(self, *args):
         self.limpar_area_central()
-        box = BoxLayout(orientation="vertical", spacing=8, padding=8)
-        self.lbl_eng = Label(text="Modulo de Engenharia IAW 4AM.AR (SW 4AMMS)\nSessao Estendida KWP2000 (10 81)", font_size="12sp", size_hint_y=0.45, halign="left", valign="middle")
+        box = BoxLayout(orientation="vertical", spacing=10, padding=10)
+        self.lbl_eng = Label(
+            text="Modulo de Engenharia IAW 4AM\nSelecione uma acao abaixo:",
+            font_size="15sp",
+            line_height=1.35,
+            size_hint_y=0.48,
+            halign="left",
+            valign="top",
+        )
         self.lbl_eng.bind(size=self.lbl_eng.setter("text_size"))
         box.add_widget(self.lbl_eng)
-        botoes1 = BoxLayout(size_hint_y=0.17, spacing=8)
-        b_dtc = Button(text="LER FALHAS (DTC)", background_normal="", background_color=(0.15, 0.50, 0.80, 1), bold=True)
+        botoes1 = BoxLayout(size_hint_y=0.16, spacing=8)
+        b_dtc = Button(text="LER FALHAS (DTC)", font_size="13sp", background_normal="", background_color=(0.15, 0.50, 0.80, 1), bold=True)
         b_dtc.bind(on_release=self.ler_dtcs)
-        b_clear = Button(text="APAGAR FALHAS", background_normal="", background_color=(0.80, 0.40, 0.12, 1), bold=True)
+        b_clear = Button(text="APAGAR FALHAS", font_size="13sp", background_normal="", background_color=(0.80, 0.40, 0.12, 1), bold=True)
         b_clear.bind(on_release=self.apagar_dtcs)
         botoes1.add_widget(b_dtc)
         botoes1.add_widget(b_clear)
         box.add_widget(botoes1)
-        b_info = Button(text="INFO ECU & ODOMETRO REAL (2180 / 2171)", size_hint_y=0.17, background_normal="", background_color=(0.38, 0.30, 0.72, 1), bold=True)
+        b_info = Button(text="INFO ECU E ODOMETRO REAL", font_size="13sp", size_hint_y=0.16, background_normal="", background_color=(0.38, 0.30, 0.72, 1), bold=True)
         b_info.bind(on_release=self.ler_info_ecu)
         box.add_widget(b_info)
-        b_scan = Button(text="VARRER ECU (2100 - 21FF) E SALVAR MAPA", size_hint_y=0.17, background_normal="", background_color=(0.20, 0.62, 0.45, 1), bold=True)
+        botoes2 = BoxLayout(size_hint_y=0.16, spacing=8)
+        b_scan = Button(text="VARRER ECU", font_size="13sp", background_normal="", background_color=(0.20, 0.62, 0.45, 1), bold=True)
         b_scan.bind(on_release=self.iniciar_varredura_ecu)
-        box.add_widget(b_scan)
+        b_stop_scan = Button(text="PARAR VARREDURA", font_size="13sp", background_normal="", background_color=(0.78, 0.22, 0.22, 1), bold=True)
+        b_stop_scan.bind(on_release=self.parar_varredura_ecu)
+        botoes2.add_widget(b_scan)
+        botoes2.add_widget(b_stop_scan)
+        box.add_widget(botoes2)
         self.area_central.add_widget(box)
 
 
