@@ -69,34 +69,36 @@ class TR4MonitorApp(App, TR4EngineMixin):
         self.inicio_log_ts = 0.0
         self.pid_grafico_id = "STFT"
         self.cards_ui = {}
+        self.nav_botoes = {}
 
-        root = BoxLayout(orientation="vertical", padding=6, spacing=5)
+        root = BoxLayout(orientation="vertical", padding=6, spacing=6)
         self.lbl_status = Label(text="DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)", bold=True, font_size="13sp", color=(1, 0.78, 0.2, 1), size_hint_y=0.05)
         root.add_widget(self.lbl_status)
 
         top_bar = BoxLayout(size_hint_y=0.08, spacing=6)
-        btn_bt = Button(text="CONECTAR MX+", font_size="12sp", background_color=(0.1, 0.55, 0.85, 1), bold=True)
-        btn_bt.bind(on_release=self.iniciar_bluetooth)
-        btn_sim = Button(text="SIMULACAO", font_size="12sp", background_color=(0.25, 0.65, 0.35, 1), bold=True)
-        btn_sim.bind(on_release=self.iniciar_simulacao)
-        btn_stop = Button(text="PARAR", font_size="12sp", background_color=(0.8, 0.25, 0.25, 1), bold=True)
-        btn_stop.bind(on_release=self.parar_conexao)
-        top_bar.add_widget(btn_bt)
-        top_bar.add_widget(btn_sim)
-        top_bar.add_widget(btn_stop)
+        for txt, cor, fn in [("CONECTAR MX+", (0.10, 0.50, 0.82, 1), self.iniciar_bluetooth), ("SIMULACAO", (0.18, 0.62, 0.34, 1), self.iniciar_simulacao), ("PARAR", (0.78, 0.22, 0.22, 1), self.parar_conexao)]:
+            b = Button(text=txt, font_size="12sp", background_normal="", background_color=cor, bold=True)
+            b.bind(on_release=fn)
+            top_bar.add_widget(b)
         root.add_widget(top_bar)
 
-        nav_bar = BoxLayout(size_hint_y=0.07, spacing=4)
+        nav_bar = BoxLayout(size_hint_y=0.07, spacing=5)
         for nome_aba, fn in [("PAINEL", self.mostrar_aba_painel), ("PIDS", self.mostrar_aba_seletor), ("GRAFICO", self.mostrar_aba_grafico), ("LOG CSV", self.mostrar_aba_log), ("ENG/DTC", self.mostrar_aba_engenharia)]:
-            b = Button(text=nome_aba, font_size="11sp", bold=True, background_color=(0.18, 0.22, 0.28, 1))
-            b.bind(on_release=fn)
+            b = Button(text=nome_aba, font_size="11sp", bold=True, background_normal="", background_color=(0.24, 0.30, 0.38, 1))
+            b.bind(on_release=lambda inst, f=fn, n=nome_aba: self._trocar_aba(n, f))
             nav_bar.add_widget(b)
+            self.nav_botoes[nome_aba] = b
         root.add_widget(nav_bar)
 
         self.area_central = BoxLayout(orientation="vertical", size_hint_y=0.80)
         root.add_widget(self.area_central)
-        self.mostrar_aba_painel()
+        self._trocar_aba("PAINEL", self.mostrar_aba_painel)
         return root
+
+    def _trocar_aba(self, nome_ativa, fn):
+        for nome, btn in self.nav_botoes.items():
+            btn.background_color = (0.12, 0.55, 0.75, 1) if nome == nome_ativa else (0.24, 0.30, 0.38, 1)
+        fn()
 
     def limpar_area_central(self):
         self.area_central.clear_widgets()
@@ -129,7 +131,7 @@ class TR4MonitorApp(App, TR4EngineMixin):
         box = BoxLayout(orientation="vertical", spacing=6)
         acoes = BoxLayout(size_hint_y=0.10, spacing=5)
         for texto, modo, cor in [("MARCAR TODOS", "TODOS", (0.15, 0.55, 0.80, 1)), ("PERFIL RAPIDO", "RAPIDO", (0.20, 0.65, 0.40, 1)), ("DESMARCAR", "NENHUM", (0.65, 0.25, 0.25, 1))]:
-            b = Button(text=texto, font_size="11sp", background_color=cor, bold=True)
+            b = Button(text=texto, font_size="11sp", background_normal="", background_color=cor, bold=True)
             b.bind(on_release=lambda x, m=modo: self.definir_todos_pids(m))
             acoes.add_widget(b)
         box.add_widget(acoes)
@@ -161,15 +163,15 @@ class TR4MonitorApp(App, TR4EngineMixin):
     def mostrar_aba_grafico(self, *args):
         self.limpar_area_central()
         box = BoxLayout(orientation="vertical", spacing=6)
-        topo = BoxLayout(size_hint_y=0.12, spacing=4)
-        for pid_id in ["STFT", "RPM", "SONDA_PRE", "TI_PRINCIPAL", "AVANCO_IGN"]:
-            b = Button(text=pid_id, font_size="11sp", bold=True)
+        topo = GridLayout(cols=5, size_hint_y=0.18, spacing=4)
+        for pid_id, rotulo in [("STFT", "STFT"), ("RPM", "RPM"), ("SONDA_PRE", "SONDA"), ("TI_PRINCIPAL", "INJECAO"), ("AVANCO_IGN", "AVANCO"), ("MAP_KPA", "MAP"), ("TPS_PCT", "TPS"), ("TEMP_AGUA", "AGUA"), ("ETANOL_INST", "ETANOL"), ("BATERIA_V", "BATERIA")]:
+            b = Button(text=rotulo, font_size="10sp", bold=True, background_normal="", background_color=(0.24, 0.30, 0.38, 1))
             b.bind(on_release=lambda x, p=pid_id: self.mudar_pid_grafico(p))
             topo.add_widget(b)
         box.add_widget(topo)
-        self.lbl_titulo_graf = Label(text=f"Grafico Ao Vivo: {self.pid_grafico_id}", size_hint_y=0.08, bold=True)
+        self.lbl_titulo_graf = Label(text=f"Grafico Ao Vivo: {self.pid_grafico_id}", size_hint_y=0.07, bold=True)
         box.add_widget(self.lbl_titulo_graf)
-        self.grafico_widget = GraficoTempoReal(size_hint_y=0.80)
+        self.grafico_widget = GraficoTempoReal(size_hint_y=0.75)
         box.add_widget(self.grafico_widget)
         self.area_central.add_widget(box)
 
@@ -186,9 +188,9 @@ class TR4MonitorApp(App, TR4EngineMixin):
         self.lbl_log_info = Label(text="Gravacao de Telemetria CSV\nSalva na pasta Download", font_size="14sp", size_hint_y=0.45)
         box.add_widget(self.lbl_log_info)
         botoes = BoxLayout(size_hint_y=0.20, spacing=8)
-        b_ini = Button(text="INICIAR LOG", background_color=(0.15, 0.65, 0.35, 1), bold=True)
+        b_ini = Button(text="INICIAR LOG", background_normal="", background_color=(0.18, 0.62, 0.34, 1), bold=True)
         b_ini.bind(on_release=self.iniciar_gravacao_log)
-        b_parar = Button(text="FECHAR LOG", background_color=(0.8, 0.25, 0.25, 1), bold=True)
+        b_parar = Button(text="FECHAR LOG", background_normal="", background_color=(0.78, 0.22, 0.22, 1), bold=True)
         b_parar.bind(on_release=self.parar_gravacao_log)
         botoes.add_widget(b_ini)
         botoes.add_widget(b_parar)
@@ -201,9 +203,9 @@ class TR4MonitorApp(App, TR4EngineMixin):
         self.lbl_eng = Label(text="Modulo de Engenharia IAW 4AM.AR (SW 4AMMS)\nSessao Estendida KWP2000 (10 81)", size_hint_y=0.55)
         box.add_widget(self.lbl_eng)
         botoes = BoxLayout(size_hint_y=0.25, spacing=8)
-        b_dtc = Button(text="LER FALHAS (DTC)", background_color=(0.2, 0.5, 0.8, 1), bold=True)
+        b_dtc = Button(text="LER FALHAS (DTC)", background_normal="", background_color=(0.15, 0.50, 0.80, 1), bold=True)
         b_dtc.bind(on_release=self.ler_dtcs)
-        b_clear = Button(text="APAGAR FALHAS", background_color=(0.8, 0.4, 0.1, 1), bold=True)
+        b_clear = Button(text="APAGAR FALHAS", background_normal="", background_color=(0.80, 0.40, 0.12, 1), bold=True)
         b_clear.bind(on_release=self.apagar_dtcs)
         botoes.add_widget(b_dtc)
         botoes.add_widget(b_clear)
