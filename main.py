@@ -220,7 +220,6 @@ class TR4MonitorApp(App, TR4EngineMixin):
         box.add_widget(b_scan)
         self.area_central.add_widget(box)
 
-
 class TelaErroApp(App):
     def __init__(self, msg_erro, **kwargs):
         super().__init__(**kwargs)
