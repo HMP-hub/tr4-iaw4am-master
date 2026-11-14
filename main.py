@@ -14,6 +14,7 @@ from pids import PIDS_DB
 from engine import TR4EngineMixin
 
 Window.clearcolor = (0.07, 0.08, 0.10, 1)
+LOG_RAPIDO_IDS = {"RPM", "MAP_KPA", "TPS_PCT", "STFT", "SENSOR_KNOCK_V", "SONDA_PRE", "TI_PRINCIPAL", "AVANCO_IGN"}
 
 
 class GraficoTempoReal(Widget):
@@ -61,7 +62,7 @@ class TR4MonitorApp(App, TR4EngineMixin):
         self.bt_in = None
         self.bt_out = None
         self.selecionados = {p["id"]: p["rapido"] for p in PIDS_DB}
-        self.selecionados_log = {p["id"]: p["rapido"] for p in PIDS_DB}
+        self.selecionados_log = {p["id"]: (p["id"] in LOG_RAPIDO_IDS) for p in PIDS_DB}
         self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
         self.valores_min = {}
         self.valores_max = {}
@@ -75,12 +76,18 @@ class TR4MonitorApp(App, TR4EngineMixin):
         self.aba_atual = "PAINEL"
 
         root = BoxLayout(orientation="vertical", padding=6, spacing=6)
-        self.lbl_status = Label(text="DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)", bold=True, font_size="13sp", color=(1, 0.78, 0.2, 1), size_hint_y=0.05)
+        self.lbl_status = Label(text="DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)", bold=True, font_size="12sp", color=(1, 0.78, 0.2, 1), size_hint_y=0.05)
         root.add_widget(self.lbl_status)
 
-        top_bar = BoxLayout(size_hint_y=0.08, spacing=6)
-        for txt, cor, fn in [("CONECTAR MX+", (0.10, 0.50, 0.82, 1), self.iniciar_bluetooth), ("SIMULACAO", (0.18, 0.62, 0.34, 1), self.iniciar_simulacao), ("PARAR", (0.78, 0.22, 0.22, 1), self.parar_conexao)]:
-            b = Button(text=txt, font_size="12sp", background_normal="", background_color=cor, bold=True)
+        top_bar = BoxLayout(size_hint_y=0.08, spacing=4)
+        botoes_topo = [
+            ("CONEXAO\nBLUETOOTH", (0.10, 0.48, 0.80, 1), self.conectar_bluetooth),
+            ("CONECTAR\nECU", (0.16, 0.62, 0.34, 1), self.conectar_ecu),
+            ("DESCONECTAR\nECU", (0.78, 0.22, 0.22, 1), self.desconectar_ecu),
+            ("SIMULACAO", (0.35, 0.32, 0.65, 1), self.iniciar_simulacao),
+        ]
+        for txt, cor, fn in botoes_topo:
+            b = Button(text=txt, font_size="10sp", halign="center", background_normal="", background_color=cor, bold=True)
             b.bind(on_release=fn)
             top_bar.add_widget(b)
         root.add_widget(top_bar)
@@ -112,21 +119,20 @@ class TR4MonitorApp(App, TR4EngineMixin):
         self.area_central.clear_widgets()
         self.cards_ui = {}
 
-    def _estilo_btn_pid(self, btn, pid, ativo, com_categoria=False):
+    def _estilo_btn_pid(self, btn, pid, ativo):
         tag = "[ON]  " if ativo else "[OFF] "
-        prefixo = f"{pid['categoria']} | " if com_categoria else ""
-        btn.text = f"{tag}{prefixo}{pid['nome']} ({pid['cmd']})"
+        btn.text = f"{tag}{pid['nome']} ({pid['cmd']})"
         btn.background_color = (0.14, 0.52, 0.32, 1) if ativo else (0.18, 0.21, 0.27, 1)
 
     def _alternar_pid_painel(self, btn, pid):
         novo = not self.selecionados.get(pid["id"], False)
         self.selecionados[pid["id"]] = novo
-        self._estilo_btn_pid(btn, pid, novo, True)
+        self._estilo_btn_pid(btn, pid, novo)
 
     def _alternar_pid_log(self, btn, pid):
         novo = not self.selecionados_log.get(pid["id"], False)
         self.selecionados_log[pid["id"]] = novo
-        self._estilo_btn_pid(btn, pid, novo, False)
+        self._estilo_btn_pid(btn, pid, novo)
 
     def mostrar_aba_painel(self, *args):
         self.limpar_area_central()
@@ -179,7 +185,7 @@ class TR4MonitorApp(App, TR4EngineMixin):
         for pid in PIDS_DB:
             btn = Button(size_hint_y=None, height=62, font_size="13sp", bold=True, background_normal="", halign="left", valign="middle", padding=(14, 0))
             btn.bind(size=btn.setter("text_size"))
-            self._estilo_btn_pid(btn, pid, self.selecionados.get(pid["id"], False), True)
+            self._estilo_btn_pid(btn, pid, self.selecionados.get(pid["id"], False))
             btn.bind(on_release=lambda inst, p=pid: self._alternar_pid_painel(inst, p))
             lista.add_widget(btn)
             self.btns_pid_ui[pid["id"]] = (btn, pid)
@@ -193,7 +199,7 @@ class TR4MonitorApp(App, TR4EngineMixin):
             self.selecionados[pid["id"]] = estado
             if pid["id"] in self.btns_pid_ui:
                 btn, p_obj = self.btns_pid_ui[pid["id"]]
-                self._estilo_btn_pid(btn, p_obj, estado, True)
+                self._estilo_btn_pid(btn, p_obj, estado)
     def mostrar_aba_grafico(self, *args):
         self.limpar_area_central()
         self.graficos_lista = []
@@ -236,7 +242,7 @@ class TR4MonitorApp(App, TR4EngineMixin):
         botoes.add_widget(b_parar)
         box.add_widget(botoes)
         acoes = BoxLayout(size_hint_y=0.09, spacing=4)
-        for txt, modo, cor in [("TODOS", "TODOS", (0.15, 0.55, 0.80, 1)), ("LOG RAPIDO", "RAPIDO", (0.20, 0.65, 0.40, 1)), ("DESMARCAR", "NENHUM", (0.65, 0.25, 0.25, 1))]:
+        for txt, modo, cor in [("TODOS", "TODOS", (0.15, 0.55, 0.80, 1)), ("LOG RAPIDO (8)", "RAPIDO", (0.20, 0.65, 0.40, 1)), ("DESMARCAR", "NENHUM", (0.65, 0.25, 0.25, 1))]:
             b = Button(text=txt, font_size="10sp", background_normal="", background_color=cor, bold=True)
             b.bind(on_release=lambda x, m=modo: self.definir_pids_log(m))
             acoes.add_widget(b)
@@ -248,7 +254,7 @@ class TR4MonitorApp(App, TR4EngineMixin):
         for pid in PIDS_DB:
             btn = Button(size_hint_y=None, height=60, font_size="13sp", bold=True, background_normal="", halign="left", valign="middle", padding=(14, 0))
             btn.bind(size=btn.setter("text_size"))
-            self._estilo_btn_pid(btn, pid, self.selecionados_log.get(pid["id"], False), False)
+            self._estilo_btn_pid(btn, pid, self.selecionados_log.get(pid["id"], False))
             btn.bind(on_release=lambda inst, p=pid: self._alternar_pid_log(inst, p))
             lista.add_widget(btn)
             self.btns_log_ui[pid["id"]] = (btn, pid)
@@ -258,11 +264,11 @@ class TR4MonitorApp(App, TR4EngineMixin):
 
     def definir_pids_log(self, modo):
         for pid in PIDS_DB:
-            estado = True if modo == "TODOS" else (pid["rapido"] if modo == "RAPIDO" else False)
+            estado = True if modo == "TODOS" else ((pid["id"] in LOG_RAPIDO_IDS) if modo == "RAPIDO" else False)
             self.selecionados_log[pid["id"]] = estado
             if pid["id"] in self.btns_log_ui:
                 btn, p_obj = self.btns_log_ui[pid["id"]]
-                self._estilo_btn_pid(btn, p_obj, estado, False)
+                self._estilo_btn_pid(btn, p_obj, estado)
 
     def mostrar_aba_engenharia(self, *args):
         self.limpar_area_central()
