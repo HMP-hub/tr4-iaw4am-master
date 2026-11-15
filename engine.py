@@ -1,6 +1,7 @@
 # coding: utf-8
 import os
 import csv
+import json
 import time
 import threading
 from datetime import datetime
@@ -16,14 +17,91 @@ from pids import PIDS_DB
 
 
 class TR4EngineMixin:
+    def _caminho_config_bt(self):
+        base = getattr(self, "user_data_dir", ".")
+        try:
+            os.makedirs(base, exist_ok=True)
+        except Exception:
+            base = "."
+        return os.path.join(base, "bt_config.json")
+
+    def _carregar_bt_salvo(self):
+        try:
+            arq = self._caminho_config_bt()
+            if os.path.exists(arq):
+                with open(arq, "r", encoding="utf-8") as f:
+                    dados = json.load(f)
+                self.bt_salvo_addr = str(dados.get("addr", "")).strip()
+                self.bt_salvo_nome = str(dados.get("nome", "")).strip()
+        except Exception:
+            self.bt_salvo_addr = ""
+            self.bt_salvo_nome = ""
+
+    def _salvar_bt_salvo(self, addr, nome):
+        self.bt_salvo_addr = str(addr or "").strip()
+        self.bt_salvo_nome = str(nome or "").strip()
+        try:
+            with open(self._caminho_config_bt(), "w", encoding="utf-8") as f:
+                json.dump({"addr": self.bt_salvo_addr, "nome": self.bt_salvo_nome}, f)
+        except Exception:
+            pass
+
+    def _atualizar_estado_conexao(self, novo_estado):
+        self.estado_conexao = novo_estado
+        if hasattr(self, "btn_bt_lista"):
+            self.btn_bt_lista.text = "TROCAR\nBLUETOOTH" if self.bt_salvo_addr else "ESCOLHER\nBLUETOOTH"
+
+        if not hasattr(self, "btn_acao_con"):
+            return
+
+        if novo_estado == "CONECTANDO":
+            self.btn_acao_con.text = "CANCELAR\nCONEXAO"
+            self.btn_acao_con.background_color = (0.85, 0.52, 0.12, 1)
+        elif novo_estado in ("CONECTADO", "SIMULACAO"):
+            self.btn_acao_con.text = "DESCONECTAR"
+            self.btn_acao_con.background_color = (0.78, 0.22, 0.22, 1)
+        else:
+            nome_curto = self.bt_salvo_nome[:14] if self.bt_salvo_nome else ""
+            self.btn_acao_con.text = f"CONECTAR\n({nome_curto})" if nome_curto else "CONECTAR"
+            self.btn_acao_con.background_color = (0.14, 0.62, 0.35, 1)
+
+    def acao_botao_conexao(self, *args):
+        estado = getattr(self, "estado_conexao", "DESCONECTADO")
+        if estado == "CONECTANDO":
+            self.cancelar_tentativa_conexao()
+        elif estado in ("CONECTADO", "SIMULACAO"):
+            self.desconectar_ecu()
+        else:
+            if self.bt_salvo_addr:
+                self._iniciar_conexao_completa(self.bt_salvo_addr, self.bt_salvo_nome or self.bt_salvo_addr)
+            else:
+                self.conectar_bluetooth()
+
+    def cancelar_tentativa_conexao(self):
+        self.cancelar_conexao = True
+        self._con_seq = getattr(self, "_con_seq", 0) + 1
+        self._fechar_socket_bt()
+        self._atualizar_estado_conexao("DESCONECTADO")
+        self._atualizar_status("CONEXAO CANCELADA PELO USUARIO", (1.0, 0.78, 0.2, 1))
+
+    def _fechar_socket_bt(self):
+        sock = getattr(self, "bt_socket", None)
+        self.bt_socket = None
+        self.bt_in = None
+        self.bt_out = None
+        if sock:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
     def iniciar_simulacao(self, *args):
         self.desconectar_ecu()
         self.modo_simulacao = True
         self.rodando = True
-        self.lbl_status.text = "SIMULACAO ATIVA | ECU: IAW 4AM.AR"
-        self.lbl_status.color = (0.3, 0.9, 0.5, 1)
+        self._atualizar_estado_conexao("SIMULACAO")
+        self._atualizar_status("SIMULACAO ATIVA | ECU: IAW 4AM.AR", (0.3, 0.9, 0.5, 1))
         threading.Thread(target=self.loop_leitura, daemon=True).start()
-
     def _pedir_permissoes_android(self):
         try:
             from android.permissions import request_permissions, Permission
@@ -40,6 +118,9 @@ class TR4EngineMixin:
             pass
 
     def conectar_bluetooth(self, *args):
+        if getattr(self, "estado_conexao", "") == "CONECTANDO":
+            self.cancelar_tentativa_conexao()
+            return
         self._pedir_permissoes_android()
         try:
             from jnius import autoclass
@@ -52,7 +133,7 @@ class TR4EngineMixin:
             if not pareados:
                 self._atualizar_status("NENHUM DISPOSITIVO PAREADO NO ANDROID", (1.0, 0.35, 0.35, 1))
                 return
-            self._abrir_seletor_bt(adapter, pareados)
+            self._abrir_seletor_bt(pareados)
         except Exception as e:
             err = str(e)
             if "BLUETOOTH_CONNECT" in err or "SecurityException" in err:
@@ -60,130 +141,183 @@ class TR4EngineMixin:
             else:
                 self._atualizar_status(f"ERRO BT: {err[:42]}", (1.0, 0.35, 0.35, 1))
 
-    def _abrir_seletor_bt(self, adapter, pareados):
+    def _abrir_seletor_bt(self, pareados):
         box = BoxLayout(orientation="vertical", padding=10, spacing=10)
-        box.add_widget(Label(text="Toque no Scanner Bluetooth pareado:", size_hint_y=0.10, bold=True, font_size="15sp"))
+        box.add_widget(
+            Label(
+                text="Toque no scanner para conectar imediatamente:",
+                size_hint_y=0.10,
+                bold=True,
+                font_size="14sp",
+            )
+        )
         scroll = ScrollView(size_hint_y=0.78)
         lista = GridLayout(cols=1, spacing=12, size_hint_y=None, padding=(4, 6))
         lista.bind(minimum_height=lista.setter("height"))
         popup = Popup(title="Selecionar Scanner Bluetooth", content=box, size_hint=(0.95, 0.85))
         for dev in pareados:
-            nome = str(dev.getName() or "").strip()
-            if not nome:
-                nome = str(dev.getAddress() or "Dispositivo Sem Nome")
+            addr = str(dev.getAddress() or "").strip()
+            nome = str(dev.getName() or "").strip() or addr or "Dispositivo Sem Nome"
+            eh_salvo = (addr and addr == self.bt_salvo_addr)
+            rotulo = f"{nome}  [SALVO]" if eh_salvo else nome
+            cor_btn = (0.14, 0.58, 0.38, 1) if eh_salvo else (0.14, 0.42, 0.68, 1)
             btn = Button(
-                text=nome,
+                text=rotulo,
                 size_hint_y=None,
                 height=68,
                 font_size="16sp",
                 bold=True,
                 background_normal="",
-                background_color=(0.14, 0.42, 0.68, 1),
+                background_color=cor_btn,
             )
-            btn.bind(on_release=lambda inst, d=dev, p=popup: self._iniciar_conexao_bt_escolhido(adapter, d, p))
+            btn.bind(on_release=lambda inst, a=addr, n=nome, p=popup: self._ao_escolher_dispositivo_bt(a, n, p))
             lista.add_widget(btn)
         scroll.add_widget(lista)
         box.add_widget(scroll)
-        btn_fechar = Button(text="CANCELAR", size_hint_y=0.12, font_size="14sp", background_normal="", background_color=(0.75, 0.22, 0.22, 1), bold=True)
+        btn_fechar = Button(
+            text="CANCELAR",
+            size_hint_y=0.12,
+            font_size="14sp",
+            background_normal="",
+            background_color=(0.75, 0.22, 0.22, 1),
+            bold=True,
+        )
         btn_fechar.bind(on_release=popup.dismiss)
         box.add_widget(btn_fechar)
         popup.open()
 
-    def _iniciar_conexao_bt_escolhido(self, adapter, dispositivo, popup):
+    def _ao_escolher_dispositivo_bt(self, addr, nome, popup):
         popup.dismiss()
-        nome_dev = str(dispositivo.getName() or "Scanner")
-        self._atualizar_status(f"CONECTANDO A {nome_dev}...", (1.0, 0.78, 0.2, 1))
-        threading.Thread(target=self._conectar_bt_thread, args=(adapter, dispositivo, nome_dev), daemon=True).start()
+        self._salvar_bt_salvo(addr, nome)
+        self._iniciar_conexao_completa(addr, nome)
 
-    def _conectar_bt_thread(self, adapter, dispositivo_alvo, nome_dev):
-        try:
-            from jnius import autoclass
-            UUID = autoclass("java.util.UUID")
-            spp_uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-            if self.bt_socket:
-                try:
-                    self.bt_socket.close()
-                except Exception:
-                    pass
-            self.bt_socket = dispositivo_alvo.createRfcommSocketToServiceRecord(spp_uuid)
-            adapter.cancelDiscovery()
-            self.bt_socket.connect()
-            self.bt_in = self.bt_socket.getInputStream()
-            self.bt_out = self.bt_socket.getOutputStream()
-            Clock.schedule_once(lambda dt: self._atualizar_status(f"BT OK ({nome_dev}) | CLIQUE EM CONECTAR ECU", (0.3, 0.85, 1.0, 1)))
-        except Exception as e:
-            self.bt_socket = None
-            self.bt_in = None
-            self.bt_out = None
-            Clock.schedule_once(lambda dt, err=str(e): self._atualizar_status(f"FALHA SOCKET BT: {err[:34]}", (1.0, 0.35, 0.35, 1)))
-    def conectar_ecu(self, *args):
-        if self.rodando and not self.modo_simulacao:
-            self.lbl_status.text = "ECU IAW 4AM JA CONECTADA"
-            return
-        if not self.bt_socket or not self.bt_in or not self.bt_out:
-            self.lbl_status.text = "ERRO: FACA A CONEXAO BLUETOOTH PRIMEIRO!"
-            self.lbl_status.color = (1.0, 0.35, 0.35, 1)
-            return
-        self.lbl_status.text = "INICIANDO K-LINE (KWP2000) NA ECU..."
-        self.lbl_status.color = (1.0, 0.78, 0.2, 1)
-        threading.Thread(target=self._conectar_ecu_thread, daemon=True).start()
+    def _iniciar_conexao_completa(self, addr, nome_dev):
+        self._pedir_permissoes_android()
+        if self.rodando or self.modo_simulacao:
+            self.desconectar_ecu()
+        self.cancelar_conexao = False
+        self._con_seq = getattr(self, "_con_seq", 0) + 1
+        seq = self._con_seq
+        self._atualizar_estado_conexao("CONECTANDO")
+        self._atualizar_status(f"CONECTANDO BT ({nome_dev})...", (1.0, 0.78, 0.2, 1))
+        threading.Thread(
+            target=self._conectar_tudo_thread,
+            args=(seq, addr, nome_dev),
+            daemon=True,
+        ).start()
 
-    def _conectar_ecu_thread(self):
+    def _abortado(self, seq):
+        return getattr(self, "cancelar_conexao", False) or seq != getattr(self, "_con_seq", 0)
+    def _conectar_tudo_thread(self, seq, addr, nome_dev):
         log_hs = []
         try:
+            from jnius import autoclass
+            BluetoothAdapter = autoclass("android.bluetooth.BluetoothAdapter")
+            UUID = autoclass("java.util.UUID")
+
+            adapter = BluetoothAdapter.getDefaultAdapter()
+            if not adapter or not adapter.isEnabled():
+                if not self._abortado(seq):
+                    Clock.schedule_once(lambda dt: self._falha_conexao("ERRO: LIGUE O BLUETOOTH DO CELULAR", []))
+                return
+
+            self._fechar_socket_bt()
+            if self._abortado(seq):
+                return
+
+            dispositivo_alvo = adapter.getRemoteDevice(addr)
+            spp_uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+            sock = dispositivo_alvo.createRfcommSocketToServiceRecord(spp_uuid)
+            self.bt_socket = sock
+            adapter.cancelDiscovery()
+            sock.connect()
+
+            if self._abortado(seq):
+                self._fechar_socket_bt()
+                return
+
+            self.bt_in = sock.getInputStream()
+            self.bt_out = sock.getOutputStream()
+
+            Clock.schedule_once(
+                lambda dt: self._atualizar_status(f"BT OK ({nome_dev}) | INICIANDO K-LINE ECU...", (1.0, 0.78, 0.2, 1))
+            )
+
             self._limpar_buffer_bt()
             r_atz = self.enviar_comando_raw("ATZ", timeout=2.5)
             log_hs.append(f"Reset Scanner: {r_atz or 'SEM RESPOSTA'}")
+            if self._abortado(seq):
+                return
             if not r_atz:
-                Clock.schedule_once(lambda dt: self._falha_handshake("SCANNER NAO RESPONDEU", log_hs))
+                Clock.schedule_once(lambda dt: self._falha_conexao("SCANNER NAO RESPONDEU", log_hs))
                 return
 
             setup_cmds = ["ATE0", "ATL0", "ATS0", "ATH0", "ATAT1", "ATST64", "ATSP5", "ATSH8110F1", "ATWM8110F13E"]
             for cmd in setup_cmds:
+                if self._abortado(seq):
+                    return
                 self.enviar_comando_raw(cmd, timeout=1.0)
 
-            Clock.schedule_once(lambda dt: self._atualizar_status("SINCRONIZANDO BARRAMENTO K-LINE...", (1.0, 0.78, 0.2, 1)))
+            Clock.schedule_once(
+                lambda dt: self._atualizar_status("SINCRONIZANDO BARRAMENTO K-LINE...", (1.0, 0.78, 0.2, 1))
+            )
             r_init = self.enviar_comando_raw("ATFI", timeout=3.5)
             log_hs.append(f"Fast Init: {r_init or 'TIMEOUT'}")
+            if self._abortado(seq):
+                return
 
             if "OK" not in r_init.upper():
                 self.enviar_comando_raw("ATSP4", timeout=1.0)
                 self.enviar_comando_raw("ATSH8110F1", timeout=1.0)
                 r_init = self.enviar_comando_raw("ATSI", timeout=4.5)
                 log_hs.append(f"Slow Init: {r_init or 'TIMEOUT'}")
+                if self._abortado(seq):
+                    return
 
             r_sess = self.enviar_comando_raw("1081", timeout=2.5)
             log_hs.append(f"Sessao KWP: {r_sess or 'TIMEOUT'}")
-            r_rpm = self.enviar_comando_raw("2131", timeout=2.0)
-            log_hs.append(f"Teste MAP: {r_rpm or 'TIMEOUT'}")
+            r_map = self.enviar_comando_raw("2131", timeout=2.0)
+            log_hs.append(f"Teste MAP: {r_map or 'TIMEOUT'}")
+            if self._abortado(seq):
+                return
 
-            limpo_rpm = "".join(c for c in r_rpm.upper() if c in "0123456789ABCDEF")
+            limpo_map = "".join(c for c in r_map.upper() if c in "0123456789ABCDEF")
             limpo_sess = "".join(c for c in r_sess.upper() if c in "0123456789ABCDEF")
-            conectou_real = ("5081" in limpo_sess) or ("6131" in limpo_rpm)
+            conectou_real = ("5081" in limpo_sess) or ("6131" in limpo_map)
 
             if not conectou_real:
-                Clock.schedule_once(lambda dt: self._falha_handshake("ECU NAO RESPONDEU (CHAVE LIGADA?)", log_hs))
+                Clock.schedule_once(
+                    lambda dt: self._falha_conexao("ECU NAO RESPONDEU (CHAVE LIGADA?)", log_hs)
+                )
                 return
 
             self.modo_simulacao = False
             self.rodando = True
-            Clock.schedule_once(lambda dt: self._sucesso_handshake())
+            Clock.schedule_once(lambda dt: self._sucesso_conexao(nome_dev))
             self.loop_leitura()
         except Exception as e:
+            if self._abortado(seq):
+                return
             self.rodando = False
+            self._fechar_socket_bt()
             log_hs.append(f"Erro: {e}")
-            Clock.schedule_once(lambda dt: self._falha_handshake("ERRO NA COMUNICACAO K-LINE", log_hs))
+            Clock.schedule_once(
+                lambda dt, err=str(e): self._falha_conexao(f"FALHA CONEXAO: {err[:34]}", log_hs)
+            )
 
-    def _sucesso_handshake(self):
-        self._atualizar_status("ECU CONECTADA | KWP2000 K-LINE ATIVO", (0.2, 0.95, 0.45, 1))
+    def _sucesso_conexao(self, nome_dev):
+        self._atualizar_estado_conexao("CONECTADO")
+        self._atualizar_status(f"ECU CONECTADA ({nome_dev}) | K-LINE ATIVO", (0.2, 0.95, 0.45, 1))
         if hasattr(self, "lbl_eng"):
             self.lbl_eng.text = "ECU conectada com sucesso!\n\nPronta para leitura de falhas, info ou varredura."
 
-    def _falha_handshake(self, titulo, log_hs):
+    def _falha_conexao(self, titulo, log_hs):
         self.rodando = False
+        self._fechar_socket_bt()
+        self._atualizar_estado_conexao("DESCONECTADO")
         self._atualizar_status(titulo, (1.0, 0.30, 0.30, 1))
-        detalhes = "\n".join(log_hs[-6:])
-        if hasattr(self, "lbl_eng"):
+        if hasattr(self, "lbl_eng") and log_hs:
+            detalhes = "\n".join(log_hs[-6:])
             self.lbl_eng.text = f"{titulo}\n\n{detalhes}"
 
     def _atualizar_status(self, texto, cor):
@@ -281,7 +415,9 @@ class TR4EngineMixin:
 
             if gravando_ativo and self.writer_log and hasattr(self, "pids_gravando_lista"):
                 try:
-                    linha = [round(time.time() - self.inicio_log_ts, 2)] + [self.valores_atuais.get(pid_id, "") for pid_id in self.pids_gravando_lista]
+                    linha = [round(time.time() - self.inicio_log_ts, 2)] + [
+                        self.valores_atuais.get(pid_id, "") for pid_id in self.pids_gravando_lista
+                    ]
                     self.writer_log.writerow(linha)
                     self.arquivo_log.flush()
                     self.linhas_gravadas_log = getattr(self, "linhas_gravadas_log", 0) + 1
@@ -312,6 +448,7 @@ class TR4EngineMixin:
         except Exception:
             pass
         return getattr(self, "user_data_dir", ".")
+
     def iniciar_gravacao_log(self, *args):
         if not self.rodando:
             if hasattr(self, "lbl_log_info"):
@@ -370,79 +507,6 @@ class TR4EngineMixin:
             self.writer_log = None
         if hasattr(self, "lbl_log_info") and arq:
             self.lbl_log_info.text = f"LOG ENCERRADO E SALVO ({qtd} linhas):\n{arq}"
-
-    def ler_info_ecu(self, *args):
-        if self.modo_simulacao:
-            self.lbl_eng.text = (
-                "Codigo Projeto ECU: CA130195\n\n"
-                "Numero HW: IAW4AMHWM44  (Ver: 00)\n\n"
-                "Numero SW: 0401BA83  (Ver: 0000)\n\n"
-                "Homologacao: 4AMMS  |  ISO: 0000000000\n\n"
-                "Data Programacao: 20/10/2009\n\n"
-                "Reescritas Flash: 1  |  Odo Reescr: 0 km\n\n"
-                "Odometro Real ECU: 69.456 km"
-            )
-            return
-        if not self.rodando or not self.bt_out or not self.bt_in:
-            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ECU primeiro."
-            return
-        self.rodando = False
-        self.lbl_eng.text = "Lendo identificacao completa e odometro da ECU..."
-        threading.Thread(target=self._ler_info_ecu_thread, daemon=True).start()
-
-    def _ler_info_ecu_thread(self):
-        def _ascii(b_list):
-            return "".join(chr(x) if 32 <= x <= 126 else "" for x in b_list).strip()
-        time.sleep(0.25)
-        b80 = self.parse_bytes_kwp(self.enviar_comando_raw("2180", timeout=2.0), "2180")
-        b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171", timeout=1.5), "2171")
-        b72 = self.parse_bytes_kwp(self.enviar_comando_raw("2172", timeout=1.5), "2172")
-        b73 = self.parse_bytes_kwp(self.enviar_comando_raw("2173", timeout=1.5), "2173")
-
-        if len(b80) >= 61:
-            desenho = _ascii(b80[0:11]) or "N/D"
-            hw = _ascii(b80[11:22]) or "N/D"
-            hw_v0 = itemgetter(22)(b80)
-            hw_ver = f"{hw_v0:02X}"
-            sw = _ascii(b80[23:34]) or "N/D"
-            sw_v0, sw_v1 = itemgetter(34, 35)(b80)
-            sw_ver = f"{sw_v0:02X}{sw_v1:02X}"
-            homolog = _ascii(b80[36:42]) or "N/D"
-            iso = "".join(f"{x:02X}" for x in b80[42:47])
-            d_dia, d_mes, d_ano = itemgetter(60, 59, 58)(b80)
-            data_prog = f"{d_dia:02X}/{d_mes:02X}/20{d_ano:02X}"
-        else:
-            desenho, hw, hw_ver, sw, sw_ver, homolog, iso, data_prog = ("N/D", "N/D", "00", "N/D", "0000", "N/D", "N/D", "N/D")
-
-        odo_txt = "Nao disponivel"
-        if len(b71) >= 3:
-            b_o0, b_o1, b_o2 = itemgetter(0, 1, 2)(b71)
-            km_val = (b_o0 << 16) | (b_o1 << 8) | b_o2
-            odo_txt = f"{km_val:,} km".replace(",", ".")
-
-        reescr = 0
-        if len(b72) >= 2:
-            r0, r1 = itemgetter(0, 1)(b72)
-            reescr = (r0 << 8) | r1
-
-        odo_reescr = 0
-        if len(b73) >= 3:
-            or0, or1, or2 = itemgetter(0, 1, 2)(b73)
-            odo_reescr = (or0 << 16) | (or1 << 8) | or2
-
-        texto = (
-            f"Codigo Projeto ECU: {desenho}\n\n"
-            f"Numero HW: {hw}  (Ver: {hw_ver})\n\n"
-            f"Numero SW: {sw}  (Ver: {sw_ver})\n\n"
-            f"Homologacao: {homolog}  |  ISO: {iso}\n\n"
-            f"Data Programacao: {data_prog}\n\n"
-            f"Reescritas Flash: {reescr}  |  Odo Reescr: {odo_reescr} km\n\n"
-            f"Odometro Real ECU: {odo_txt}"
-        )
-        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", texto))
-        if self.bt_socket:
-            self.rodando = True
-            self.loop_leitura()
     def ler_dtcs(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = "Nenhuma falha armazenada na ECU."
