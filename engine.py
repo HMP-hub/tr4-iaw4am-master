@@ -155,7 +155,7 @@ class TR4EngineMixin:
             r_sess = self.enviar_comando_raw("1081", timeout=2.5)
             log_hs.append(f"Sessao KWP: {r_sess or 'TIMEOUT'}")
             r_rpm = self.enviar_comando_raw("2131", timeout=2.0)
-            log_hs.append(f"Teste RPM: {r_rpm or 'TIMEOUT'}")
+            log_hs.append(f"Teste MAP: {r_rpm or 'TIMEOUT'}")
 
             limpo_rpm = "".join(c for c in r_rpm.upper() if c in "0123456789ABCDEF")
             limpo_sess = "".join(c for c in r_sess.upper() if c in "0123456789ABCDEF")
@@ -506,11 +506,15 @@ class TR4EngineMixin:
             self.lbl_eng.text = "Conecte o Bluetooth primeiro!"
             return
         self.rodando = False
-        self.lbl_eng.text = "Varrendo enderecos fisicos no Pino 7 (K-Line)...\n\nAguarde ~20 segundos..."
+        self.lbl_eng.text = "Encerrando sessao atual e buscando modulos no Pino 7...\n\nAguarde ~20 segundos..."
         threading.Thread(target=self._buscar_modulos_thread, daemon=True).start()
 
     def _buscar_modulos_thread(self):
         time.sleep(0.35)
+        self.enviar_comando_raw("82", timeout=1.0)
+        self.enviar_comando_raw("ATPC", timeout=0.8)
+        time.sleep(0.4)
+
         alvos = [
             ("10", "Injecao Eletronica (ECU)"),
             ("11", "Motor / Coprocessador"),
@@ -524,9 +528,8 @@ class TR4EngineMixin:
         for addr, nome in alvos:
             msg_step = f"Testando endereco 0x{addr} ({nome})..."
             Clock.schedule_once(lambda dt, m=msg_step: setattr(self.lbl_eng, "text", m))
-            self.enviar_comando_raw("ATPC", timeout=0.8)
-            time.sleep(0.55)
             self.enviar_comando_raw("ATSP5", timeout=0.8)
+            self.enviar_comando_raw("ATST64", timeout=0.8)
             self.enviar_comando_raw(f"ATSH81{addr}F1", timeout=0.8)
             self.enviar_comando_raw(f"ATWM81{addr}F13E", timeout=0.8)
             r_fi = self.enviar_comando_raw("ATFI", timeout=2.5)
@@ -534,12 +537,14 @@ class TR4EngineMixin:
             limpo = "".join(c for c in (r_fi + r_ses).upper() if c in "0123456789ABCDEF")
             if "OK" in r_fi.upper() or "5081" in limpo or "C1" in limpo:
                 resultados.append(f"[0x{addr}] {nome}: RESPONDEU!")
+                self.enviar_comando_raw("82", timeout=0.8)
             else:
                 resultados.append(f"[0x{addr}] {nome}: Sem resposta")
+            self.enviar_comando_raw("ATPC", timeout=0.8)
+            time.sleep(0.35)
 
-        self.enviar_comando_raw("ATPC", timeout=0.8)
-        time.sleep(0.55)
         self.enviar_comando_raw("ATSP5", timeout=0.8)
+        self.enviar_comando_raw("ATST64", timeout=0.8)
         self.enviar_comando_raw("ATSH8110F1", timeout=0.8)
         self.enviar_comando_raw("ATWM8110F13E", timeout=0.8)
         self.enviar_comando_raw("ATFI", timeout=2.5)
