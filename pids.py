@@ -165,6 +165,8 @@ PIDS_DB = [
         "calc": lambda b: _num(_s16(b, 18), 0.1, 1),
         "sim": lambda t: round(13.8 + 1.5 * math.sin(t * 1.8), 1),
     },
+
+    # --- Complementares confirmados (selecionaveis em PIDS / LOG CSV) --------------------------------------------
     {
         "id": "IAT",
         "nome": "Temperatura Ar Admissao",
@@ -321,6 +323,8 @@ PIDS_DB = [
         "calc": lambda b: _num(_u16(b, 0), 1, 0),
         "sim": lambda t: 4.0,
     },
+
+    # --- Apenas conferir em uso natural (abastecimento e ventoinha) ----------------------------------------------
     {
         "id": "ETANOL_REAL",
         "nome": "(?) Etanol Aprendido",
