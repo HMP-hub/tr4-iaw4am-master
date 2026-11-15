@@ -20,7 +20,7 @@ class TR4EngineMixin:
         self.desconectar_ecu()
         self.modo_simulacao = True
         self.rodando = True
-        self.lbl_status.text = "SIMULACAO ATIVA | ECU: IAW 4AM"
+        self.lbl_status.text = "SIMULACAO ATIVA | ECU: IAW 4AM.AR"
         self.lbl_status.color = (0.3, 0.9, 0.5, 1)
         threading.Thread(target=self.loop_leitura, daemon=True).start()
 
@@ -177,7 +177,7 @@ class TR4EngineMixin:
     def _sucesso_handshake(self):
         self._atualizar_status("ECU CONECTADA | KWP2000 K-LINE ATIVO", (0.2, 0.95, 0.45, 1))
         if hasattr(self, "lbl_eng"):
-            self.lbl_eng.text = "ECU conectada com sucesso!\nPronta para leitura de falhas, info ou varredura."
+            self.lbl_eng.text = "ECU conectada com sucesso!\n\nPronta para leitura de falhas, info ou varredura."
 
     def _falha_handshake(self, titulo, log_hs):
         self.rodando = False
@@ -374,11 +374,12 @@ class TR4EngineMixin:
     def ler_info_ecu(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = (
-                "Codigo Desenho ECU: CA130195\n\n"
-                "Numero Hardware: IAW4AMHWM44\n\n"
-                "Numero Software: 0401BA83\n\n"
-                "Homologacao: 4AMMS\n\n"
+                "Codigo Projeto ECU: CA130195\n\n"
+                "Numero HW: IAW4AMHWM44  (Ver: 00)\n\n"
+                "Numero SW: 0401BA83  (Ver: 0000)\n\n"
+                "Homologacao: 4AMMS  |  ISO: 0000000000\n\n"
                 "Data Programacao: 20/10/2009\n\n"
+                "Reescritas Flash: 1  |  Odo Reescr: 0 km\n\n"
                 "Odometro Real ECU: 69.456 km"
             )
             return
@@ -386,7 +387,7 @@ class TR4EngineMixin:
             self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ECU primeiro."
             return
         self.rodando = False
-        self.lbl_eng.text = "Lendo identificacao e odometro da ECU..."
+        self.lbl_eng.text = "Lendo identificacao completa e odometro da ECU..."
         threading.Thread(target=self._ler_info_ecu_thread, daemon=True).start()
 
     def _ler_info_ecu_thread(self):
@@ -395,16 +396,23 @@ class TR4EngineMixin:
         time.sleep(0.25)
         b80 = self.parse_bytes_kwp(self.enviar_comando_raw("2180", timeout=2.0), "2180")
         b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171", timeout=1.5), "2171")
+        b72 = self.parse_bytes_kwp(self.enviar_comando_raw("2172", timeout=1.5), "2172")
+        b73 = self.parse_bytes_kwp(self.enviar_comando_raw("2173", timeout=1.5), "2173")
 
         if len(b80) >= 61:
             desenho = _ascii(b80[0:11]) or "N/D"
             hw = _ascii(b80[11:22]) or "N/D"
+            hw_v0 = itemgetter(22)(b80)
+            hw_ver = f"{hw_v0:02X}"
             sw = _ascii(b80[23:34]) or "N/D"
+            sw_v0, sw_v1 = itemgetter(34, 35)(b80)
+            sw_ver = f"{sw_v0:02X}{sw_v1:02X}"
             homolog = _ascii(b80[36:42]) or "N/D"
+            iso = "".join(f"{x:02X}" for x in b80[42:47])
             d_dia, d_mes, d_ano = itemgetter(60, 59, 58)(b80)
             data_prog = f"{d_dia:02X}/{d_mes:02X}/20{d_ano:02X}"
         else:
-            desenho, hw, sw, homolog, data_prog = ("N/D", "N/D", "N/D", "N/D", "N/D")
+            desenho, hw, hw_ver, sw, sw_ver, homolog, iso, data_prog = ("N/D", "N/D", "00", "N/D", "0000", "N/D", "N/D", "N/D")
 
         odo_txt = "Nao disponivel"
         if len(b71) >= 3:
@@ -412,12 +420,23 @@ class TR4EngineMixin:
             km_val = (b_o0 << 16) | (b_o1 << 8) | b_o2
             odo_txt = f"{km_val:,} km".replace(",", ".")
 
+        reescr = 0
+        if len(b72) >= 2:
+            r0, r1 = itemgetter(0, 1)(b72)
+            reescr = (r0 << 8) | r1
+
+        odo_reescr = 0
+        if len(b73) >= 3:
+            or0, or1, or2 = itemgetter(0, 1, 2)(b73)
+            odo_reescr = (or0 << 16) | (or1 << 8) | or2
+
         texto = (
-            f"Codigo Desenho ECU: {desenho}\n\n"
-            f"Numero Hardware: {hw}\n\n"
-            f"Numero Software: {sw}\n\n"
-            f"Homologacao: {homolog}\n\n"
+            f"Codigo Projeto ECU: {desenho}\n\n"
+            f"Numero HW: {hw}  (Ver: {hw_ver})\n\n"
+            f"Numero SW: {sw}  (Ver: {sw_ver})\n\n"
+            f"Homologacao: {homolog}  |  ISO: {iso}\n\n"
             f"Data Programacao: {data_prog}\n\n"
+            f"Reescritas Flash: {reescr}  |  Odo Reescr: {odo_reescr} km\n\n"
             f"Odometro Real ECU: {odo_txt}"
         )
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", texto))
@@ -480,6 +499,52 @@ class TR4EngineMixin:
             self.rodando = True
             self.loop_leitura()
 
+    def buscar_modulos_kwp(self, *args):
+        if self.modo_simulacao:
+            self.lbl_eng.text = "Simulacao:\n[0x10] Injecao Motor (IAW 4AM) - ATIVO\n[0x18] Cambio AT - Sem resposta"
+            return
+        if not self.bt_socket or not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "Conecte o Bluetooth primeiro!"
+            return
+        self.rodando = False
+        self.lbl_eng.text = "Varrendo enderecos fisicos no Pino 7 (K-Line)...\n\nAguarde ~15 segundos..."
+        threading.Thread(target=self._buscar_modulos_thread, daemon=True).start()
+
+    def _buscar_modulos_thread(self):
+        time.sleep(0.3)
+        alvos = [
+            ("10", "Injecao Eletronica (ECU)"),
+            ("11", "Motor / Coprocessador"),
+            ("18", "Transmissao Automatica (TCU)"),
+            ("28", "Freios ABS / Tracao"),
+            ("40", "Carroceria / BCM"),
+            ("58", "Airbag (SRS)"),
+            ("60", "Painel / Imobilizador"),
+        ]
+        resultados = []
+        for addr, nome in alvos:
+            Clock.schedule_once(lambda dt, a=addr, n=nome: setattr(self.lbl_eng, "text", f"Testando endereco 0x{a} ({n})..."))
+            self.enviar_comando_raw(f"ATSH81{addr}F1", timeout=0.8)
+            self.enviar_comando_raw(f"ATWM81{addr}F13E", timeout=0.8)
+            r_fi = self.enviar_comando_raw("ATFI", timeout=2.0)
+            r_ses = self.enviar_comando_raw("1081", timeout=1.5)
+            limpo = "".join(c for c in (r_fi + r_ses).upper() if c in "0123456789ABCDEF")
+            if "OK" in r_fi.upper() or "5081" in limpo or "C1" in limpo:
+                resultados.append(f"[0x{addr}] {nome}: RESPONDEU!")
+            else:
+                resultados.append(f"[0x{addr}] {nome}: Sem resposta")
+
+        self.enviar_comando_raw("ATSH8110F1", timeout=1.0)
+        self.enviar_comando_raw("ATWM8110F13E", timeout=1.0)
+        self.enviar_comando_raw("ATFI", timeout=2.5)
+        self.enviar_comando_raw("1081", timeout=1.5)
+
+        texto_final = "Resultado da Busca de Modulos (Pino 7):\n\n" + "\n".join(resultados)
+        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", texto_final))
+        if self.bt_socket:
+            self.rodando = True
+            self.loop_leitura()
+
     def desconectar_ecu(self, *args):
         self.rodando = False
         self.varrendo = False
@@ -495,7 +560,7 @@ class TR4EngineMixin:
             self.lbl_status.text = "ECU DESCONECTADA | BLUETOOTH ATIVO"
             self.lbl_status.color = (0.3, 0.85, 1.0, 1)
         else:
-            self.lbl_status.text = "DESCONECTADO | ECU: IAW 4AM"
+            self.lbl_status.text = "DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)"
             self.lbl_status.color = (1, 0.78, 0.2, 1)
 
     def iniciar_varredura_ecu(self, *args):
@@ -527,35 +592,3 @@ class TR4EngineMixin:
                 break
             cmd = f"21{code:02X}"
             if code % 8 == 0:
-                Clock.schedule_once(
-                    lambda dt, c=cmd, n=len(encontrados): setattr(
-                        self.lbl_eng, "text", f"Varrendo endereco {c} de 21FF...\n\nPIDs ativos encontrados: {n}"
-                    )
-                )
-            resp = self.enviar_comando_raw(cmd, timeout=0.9)
-            limpo = "".join(c for c in resp.upper() if c in "0123456789ABCDEF")
-            prefixo_ok = f"61{code:02X}"
-            idx = limpo.find(prefixo_ok)
-            if idx != -1:
-                dados = limpo[idx + 4:]
-                pares = " ".join(dados[i:i + 2] for i in range(0, len(dados) - 1, 2))
-                encontrados.append(f"{cmd} -> {pares}")
-
-        self.varrendo = False
-        try:
-            with open(nome_arq, "w", encoding="utf-8") as f:
-                f.write(f"MAPA DE PIDS ATIVOS - ECU IAW 4AM ({datetime.now()})\n")
-                f.write(f"Total encontrados: {len(encontrados)}\n" + "=" * 45 + "\n")
-                f.write("\n".join(encontrados))
-            resumo = f"Salvo em:\n{nome_arq}"
-        except Exception as e:
-            resumo = f"Erro ao salvar arquivo: {e}"
-
-        Clock.schedule_once(
-            lambda dt: setattr(
-                self.lbl_eng, "text", f"Varredura finalizada!\n\nTotal encontrados: {len(encontrados)}\n\n{resumo}"
-            )
-        )
-        if self.bt_socket:
-            self.rodando = True
-            self.loop_leitura()
