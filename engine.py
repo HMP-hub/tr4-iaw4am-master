@@ -312,7 +312,6 @@ class TR4EngineMixin:
         except Exception:
             pass
         return getattr(self, "user_data_dir", ".")
-
     def iniciar_gravacao_log(self, *args):
         if not self.rodando:
             if hasattr(self, "lbl_log_info"):
@@ -371,6 +370,7 @@ class TR4EngineMixin:
             self.writer_log = None
         if hasattr(self, "lbl_log_info") and arq:
             self.lbl_log_info.text = f"LOG ENCERRADO E SALVO ({qtd} linhas):\n{arq}"
+
     def ler_info_ecu(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = (
@@ -443,7 +443,6 @@ class TR4EngineMixin:
         if self.bt_socket:
             self.rodando = True
             self.loop_leitura()
-
     def ler_dtcs(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = "Nenhuma falha armazenada na ECU."
@@ -592,3 +591,35 @@ class TR4EngineMixin:
                 break
             cmd = f"21{code:02X}"
             if code % 8 == 0:
+                Clock.schedule_once(
+                    lambda dt, c=cmd, n=len(encontrados): setattr(
+                        self.lbl_eng, "text", f"Varrendo endereco {c} de 21FF...\n\nPIDs ativos encontrados: {n}"
+                    )
+                )
+            resp = self.enviar_comando_raw(cmd, timeout=0.9)
+            limpo = "".join(c for c in resp.upper() if c in "0123456789ABCDEF")
+            prefixo_ok = f"61{code:02X}"
+            idx = limpo.find(prefixo_ok)
+            if idx != -1:
+                dados = limpo[idx + 4:]
+                pares = " ".join(dados[i:i + 2] for i in range(0, len(dados) - 1, 2))
+                encontrados.append(f"{cmd} -> {pares}")
+
+        self.varrendo = False
+        try:
+            with open(nome_arq, "w", encoding="utf-8") as f:
+                f.write(f"MAPA DE PIDS ATIVOS - ECU IAW 4AM ({datetime.now()})\n")
+                f.write(f"Total encontrados: {len(encontrados)}\n" + "=" * 45 + "\n")
+                f.write("\n".join(encontrados))
+            resumo = f"Salvo em:\n{nome_arq}"
+        except Exception as e:
+            resumo = f"Erro ao salvar arquivo: {e}"
+
+        Clock.schedule_once(
+            lambda dt: setattr(
+                self.lbl_eng, "text", f"Varredura finalizada!\n\nTotal encontrados: {len(encontrados)}\n\n{resumo}"
+            )
+        )
+        if self.bt_socket:
+            self.rodando = True
+            self.loop_leitura()
