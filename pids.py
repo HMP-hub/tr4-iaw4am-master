@@ -21,6 +21,13 @@ def _u8(b, idx=0):
     return b[idx]
 
 
+def _f_para_c(b, idx):
+    v = _u16(b, idx)
+    if v is None:
+        return 0.0
+    return round((v - 32.0) * 5.0 / 9.0, 1)
+
+
 def _knock_cil(b, idx):
     v = _s16(b, idx)
     if v is None:
@@ -57,6 +64,17 @@ PIDS_DB = [
         "sim": lambda t: 1000.0,
     },
     {
+        "id": "VEL",
+        "nome": "Velocidade Veiculo",
+        "unidade": "km/h",
+        "cmd": "21A2",
+        "rapido": False,
+        "min": 0,
+        "max": 200,
+        "calc": lambda b: float(_u16(b, 8)) if _u16(b, 8) is not None else 0.0,
+        "sim": lambda t: 0.0,
+    },
+    {
         "id": "MAP",
         "nome": "Pressao Coletor (MAP)",
         "unidade": "kPa",
@@ -86,8 +104,8 @@ PIDS_DB = [
         "rapido": True,
         "min": 0,
         "max": 125,
-        "calc": lambda b: float(_u16(b, 4)) if _u16(b, 4) is not None else 0.0,
-        "sim": lambda t: round(78.0 + 1.5 * math.sin(t * 0.1), 1),
+        "calc": lambda b: _f_para_c(b, 4),
+        "sim": lambda t: round(88.0 + 1.5 * math.sin(t * 0.1), 1),
     },
     {
         "id": "IAT",
@@ -97,8 +115,41 @@ PIDS_DB = [
         "rapido": True,
         "min": 0,
         "max": 100,
-        "calc": lambda b: float(_u16(b, 6)) if _u16(b, 6) is not None else 0.0,
-        "sim": lambda t: round(48.0 + 2.0 * math.sin(t * 0.15), 1),
+        "calc": lambda b: _f_para_c(b, 6),
+        "sim": lambda t: round(42.0 + 2.0 * math.sin(t * 0.15), 1),
+    },
+    {
+        "id": "TPS",
+        "nome": "Posicao Borboleta (TPS)",
+        "unidade": "%",
+        "cmd": "213D",
+        "rapido": True,
+        "min": 0,
+        "max": 100,
+        "calc": lambda b: round((_u16(b, 0) or 0) * 0.1, 1),
+        "sim": lambda t: round(max(0.0, 12.0 * math.sin(t * 1.1)), 1),
+    },
+    {
+        "id": "TPS_2",
+        "nome": "Posicao Borboleta Canal 2",
+        "unidade": "%",
+        "cmd": "213E",
+        "rapido": False,
+        "min": 0,
+        "max": 100,
+        "calc": lambda b: round((_u16(b, 0) or 0) * 0.1, 1),
+        "sim": lambda t: 0.0,
+    },
+    {
+        "id": "IAC_PASSOS",
+        "nome": "Atuador Marcha Lenta (IAC)",
+        "unidade": "passos",
+        "cmd": "21A2",
+        "rapido": False,
+        "min": 0,
+        "max": 250,
+        "calc": lambda b: float(_u16(b, 14)) if _u16(b, 14) is not None else 0.0,
+        "sim": lambda t: 89.0,
     },
     {
         "id": "TI_EFETIVO",
@@ -165,28 +216,6 @@ PIDS_DB = [
         "max": 15,
         "calc": lambda b: round((_s16(b, 0) or 0) * 0.1, 1),
         "sim": lambda t: -0.1,
-    },
-    {
-        "id": "TPS",
-        "nome": "Posicao Borboleta (TPS)",
-        "unidade": "%",
-        "cmd": "21A2",
-        "rapido": True,
-        "min": 0,
-        "max": 100,
-        "calc": lambda b: round((_u16(b, 14) or 0) * 0.1, 1),
-        "sim": lambda t: round(8.9 + 1.0 * abs(math.sin(t * 1.1)), 1),
-    },
-    {
-        "id": "TPS_FINO",
-        "nome": "Posicao Borboleta / Pedal Fino",
-        "unidade": "%",
-        "cmd": "21A2",
-        "rapido": False,
-        "min": 0,
-        "max": 100,
-        "calc": lambda b: round((_u16(b, 12) or 0) * 0.01, 1),
-        "sim": lambda t: 10.3,
     },
     {
         "id": "BATERIA",
