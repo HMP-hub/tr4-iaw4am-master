@@ -1,5 +1,7 @@
 # coding: utf-8
+import os
 import threading
+import traceback
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
@@ -10,10 +12,59 @@ from kivy.uix.togglebutton import ToggleButton
 from kivy.graphics import Color, Line, Rectangle
 from kivy.core.window import Window
 
-from pids import PIDS_DB
-from engine import TR4EngineMixin
-
 Window.clearcolor = (0.07, 0.08, 0.10, 1)
+
+ERRO_BOOT = ""
+try:
+    from pids import PIDS_DB
+except Exception:
+    PIDS_DB = []
+    ERRO_BOOT += "ERRO AO IMPORTAR pids.py:\n" + traceback.format_exc() + "\n"
+
+try:
+    from engine import TR4EngineMixin
+except Exception:
+    ERRO_BOOT += "ERRO AO IMPORTAR engine.py:\n" + traceback.format_exc() + "\n"
+
+    class TR4EngineMixin:
+        pass
+
+
+def _registrar_crash_boot(texto_erro):
+    try:
+        if os.path.exists("/sdcard/Download") and os.access("/sdcard/Download", os.W_OK):
+            with open("/sdcard/Download/TR4_ERRO_BOOT.txt", "w", encoding="utf-8") as f:
+                f.write(texto_erro)
+    except Exception:
+        pass
+
+
+def _criar_tela_erro_boot(texto_erro):
+    _registrar_crash_boot(texto_erro)
+    box = BoxLayout(orientation="vertical", padding=12, spacing=8)
+    box.add_widget(
+        Label(
+            text="FALHA AO INICIAR O APP (salvo em Download/TR4_ERRO_BOOT.txt):",
+            size_hint_y=0.12,
+            bold=True,
+            color=(1, 0.35, 0.35, 1),
+            font_size="14sp",
+        )
+    )
+    scroll = ScrollView(size_hint_y=0.88)
+    lbl = Label(
+        text=texto_erro,
+        size_hint_y=None,
+        font_size="12sp",
+        color=(0.95, 0.95, 0.95, 1),
+        halign="left",
+        valign="top",
+    )
+    lbl.bind(width=lambda inst, w: setattr(inst, "text_size", (w, None)))
+    lbl.bind(texture_size=lambda inst, ts: setattr(inst, "height", ts[1] + 20))
+    scroll.add_widget(lbl)
+    box.add_widget(scroll)
+    return box
 
 
 class GraficoTempoReal(BoxLayout):
@@ -74,24 +125,38 @@ class GraficoTempoReal(BoxLayout):
                     pontos.extend([px, py])
                 Color(*self.cor_linha)
                 Line(points=pontos, width=1.8)
-
-
 class TR4ScannerApp(TR4EngineMixin, App):
     def build(self):
         self.title = "TR4 IAW4AM Master"
+        if ERRO_BOOT:
+            return _criar_tela_erro_boot(ERRO_BOOT)
+        try:
+            return self._build_ui()
+        except Exception:
+            return _criar_tela_erro_boot(traceback.format_exc())
+
+    def _build_ui(self):
         self.rodando = False
         self.varrendo = False
         self.modo_simulacao = False
+        self.estado_conexao = "DESCONECTADO"
+        self.cancelar_conexao = False
+        self._con_seq = 0
+
         self.gravando_log = False
         self.log_pausado = False
         self.linhas_gravadas_log = 0
         self.caminho_log_atual = ""
         self.arquivo_log = None
         self.writer_log = None
+
         self.bt_lock = threading.Lock()
         self.bt_socket = None
         self.bt_in = None
         self.bt_out = None
+        self.bt_salvo_addr = ""
+        self.bt_salvo_nome = ""
+        self._carregar_bt_salvo()
 
         self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
         self.valores_min = {}
@@ -113,24 +178,54 @@ class TR4ScannerApp(TR4EngineMixin, App):
         )
         raiz.add_widget(self.lbl_status)
 
-        barra_con = BoxLayout(size_hint_y=0.075, spacing=5)
-        btn_bt = Button(text="CONEXAO\nBLUETOOTH", background_normal="", background_color=(0.12, 0.45, 0.80, 1), font_size="11sp", bold=True, halign="center")
-        btn_bt.bind(on_release=self.conectar_bluetooth)
+        barra_con = BoxLayout(size_hint_y=0.078, spacing=6)
 
-        btn_ecu = Button(text="CONECTAR\nECU", background_normal="", background_color=(0.14, 0.62, 0.35, 1), font_size="11sp", bold=True, halign="center")
-        btn_ecu.bind(on_release=self.conectar_ecu)
+        self.btn_bt_lista = Button(
+            text="ESCOLHER\nBLUETOOTH" if not self.bt_salvo_addr else "TROCAR\nBLUETOOTH",
+            size_hint_x=0.31,
+            background_normal="",
+            background_color=(0.12, 0.45, 0.80, 1),
+            font_size="11sp",
+            bold=True,
+            halign="center",
+            valign="middle",
+        )
+        self.btn_bt_lista.bind(size=self.btn_bt_lista.setter("text_size"))
+        self.btn_bt_lista.bind(on_release=self.conectar_bluetooth)
 
-        btn_desc = Button(text="DESCONECTAR\nECU", background_normal="", background_color=(0.75, 0.22, 0.22, 1), font_size="11sp", bold=True, halign="center")
-        btn_desc.bind(on_release=self.desconectar_ecu)
+        self.btn_acao_con = Button(
+            text="CONECTAR",
+            size_hint_x=0.43,
+            background_normal="",
+            background_color=(0.14, 0.62, 0.35, 1),
+            font_size="12sp",
+            bold=True,
+            halign="center",
+            valign="middle",
+        )
+        self.btn_acao_con.bind(size=self.btn_acao_con.setter("text_size"))
+        self.btn_acao_con.bind(on_release=self.acao_botao_conexao)
 
-        btn_sim = Button(text="SIMULACAO", background_normal="", background_color=(0.45, 0.30, 0.72, 1), font_size="11sp", bold=True)
-        btn_sim.bind(on_release=self.iniciar_simulacao)
+        self.btn_sim = Button(
+            text="SIMULACAO",
+            size_hint_x=0.26,
+            background_normal="",
+            background_color=(0.45, 0.30, 0.72, 1),
+            font_size="11sp",
+            bold=True,
+            halign="center",
+            valign="middle",
+        )
+        self.btn_sim.bind(size=self.btn_sim.setter("text_size"))
+        self.btn_sim.bind(on_release=self.iniciar_simulacao)
 
-        barra_con.add_widget(btn_bt)
-        barra_con.add_widget(btn_ecu)
-        barra_con.add_widget(btn_desc)
-        barra_con.add_widget(btn_sim)
+        barra_con.add_widget(self.btn_bt_lista)
+        barra_con.add_widget(self.btn_acao_con)
+        barra_con.add_widget(self.btn_sim)
         raiz.add_widget(barra_con)
+
+        self._atualizar_estado_conexao("DESCONECTADO")
+
         barra_abas = BoxLayout(size_hint_y=0.065, spacing=4)
         self.botoes_aba = {}
         for aba_id, aba_nome in [
@@ -146,7 +241,7 @@ class TR4ScannerApp(TR4EngineMixin, App):
             barra_abas.add_widget(b)
         raiz.add_widget(barra_abas)
 
-        self.area_conteudo = BoxLayout(size_hint_y=0.805)
+        self.area_conteudo = BoxLayout(size_hint_y=0.802)
         raiz.add_widget(self.area_conteudo)
 
         self.telas = {
@@ -159,7 +254,6 @@ class TR4ScannerApp(TR4EngineMixin, App):
 
         self.trocar_aba("PAINEL")
         return raiz
-
     def trocar_aba(self, aba_id):
         self.area_conteudo.clear_widgets()
         self.area_conteudo.add_widget(self.telas[aba_id])
@@ -270,7 +364,7 @@ class TR4ScannerApp(TR4EngineMixin, App):
         self.graficos_lista = [
             GraficoTempoReal("Rotacao (RPM)", "rpm", (0.25, 0.85, 1.0, 1), 0, 6000),
             GraficoTempoReal("Sonda Lambda Pre-Cat", "mV", (0.30, 0.95, 0.45, 1), 0, 1000),
-            GraficoTempoReal("Integrador Lambda (STFT)", "%", (1.0, 0.75, 0.20, 1), -25, 25),
+            GraficoTempoReal("Integrador Lambda (STFT)", "%", (1.0, 0.75, 0.20, 1), -30, 30),
             GraficoTempoReal("Tempo Injecao Consolidado", "ms", (0.95, 0.40, 0.55, 1), 0, 16),
         ]
         self.pids_graf = ["RPM", "LAMBDA_1", "STFT", "TI_EFETIVO"]
@@ -323,12 +417,18 @@ class TR4ScannerApp(TR4EngineMixin, App):
         box.add_widget(scroll)
 
         barra_grav = BoxLayout(size_hint_y=0.11, spacing=6)
-        btn_ini = Button(text="INICIAR /\nCONTINUAR", background_normal="", background_color=(0.15, 0.65, 0.35, 1), bold=True, font_size="12sp", halign="center")
+        btn_ini = Button(text="INICIAR /\nCONTINUAR", background_normal="", background_color=(0.15, 0.65, 0.35, 1), bold=True, font_size="12sp", halign="center", valign="middle")
+        btn_ini.bind(size=btn_ini.setter("text_size"))
         btn_ini.bind(on_release=self.iniciar_gravacao_log)
-        btn_pausar = Button(text="PAUSAR\nLOG", background_normal="", background_color=(0.82, 0.55, 0.12, 1), bold=True, font_size="12sp", halign="center")
+
+        btn_pausar = Button(text="PAUSAR\nLOG", background_normal="", background_color=(0.82, 0.55, 0.12, 1), bold=True, font_size="12sp", halign="center", valign="middle")
+        btn_pausar.bind(size=btn_pausar.setter("text_size"))
         btn_pausar.bind(on_release=self.pausar_gravacao_log)
-        btn_parar = Button(text="ENCERRAR\nE SALVAR", background_normal="", background_color=(0.78, 0.22, 0.22, 1), bold=True, font_size="12sp", halign="center")
+
+        btn_parar = Button(text="ENCERRAR\nE SALVAR", background_normal="", background_color=(0.78, 0.22, 0.22, 1), bold=True, font_size="12sp", halign="center", valign="middle")
+        btn_parar.bind(size=btn_parar.setter("text_size"))
         btn_parar.bind(on_release=self.parar_gravacao_log)
+
         barra_grav.add_widget(btn_ini)
         barra_grav.add_widget(btn_pausar)
         barra_grav.add_widget(btn_parar)
