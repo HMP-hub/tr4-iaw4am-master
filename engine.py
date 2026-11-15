@@ -17,10 +17,16 @@ from pids import PIDS_DB
 
 
 class TR4EngineMixin:
+    # -------------------------------------------------------------------------
+    # Persistencia do adaptador Bluetooth favorito & controle de estado da UI
+    # -------------------------------------------------------------------------
     def _caminho_config_bt(self):
-        base = getattr(self, "user_data_dir", ".")
+        base = "."
         try:
-            os.makedirs(base, exist_ok=True)
+            cand = getattr(self, "user_data_dir", ".")
+            if cand:
+                os.makedirs(cand, exist_ok=True)
+                base = cand
         except Exception:
             base = "."
         return os.path.join(base, "bt_config.json")
@@ -94,7 +100,9 @@ class TR4EngineMixin:
                 sock.close()
             except Exception:
                 pass
-
+    # -------------------------------------------------------------------------
+    # Simulacao, permissoes e seletor Bluetooth (conecta direto ao escolher)
+    # -------------------------------------------------------------------------
     def iniciar_simulacao(self, *args):
         self.desconectar_ecu()
         self.modo_simulacao = True
@@ -102,6 +110,7 @@ class TR4EngineMixin:
         self._atualizar_estado_conexao("SIMULACAO")
         self._atualizar_status("SIMULACAO ATIVA | ECU: IAW 4AM.AR", (0.3, 0.9, 0.5, 1))
         threading.Thread(target=self.loop_leitura, daemon=True).start()
+
     def _pedir_permissoes_android(self):
         try:
             from android.permissions import request_permissions, Permission
@@ -190,7 +199,9 @@ class TR4EngineMixin:
         popup.dismiss()
         self._salvar_bt_salvo(addr, nome)
         self._iniciar_conexao_completa(addr, nome)
-
+    # -------------------------------------------------------------------------
+    # Conexao unificada em 1 passo: Socket Bluetooth + Handshake KWP2000 ECU
+    # -------------------------------------------------------------------------
     def _iniciar_conexao_completa(self, addr, nome_dev):
         self._pedir_permissoes_android()
         if self.rodando or self.modo_simulacao:
@@ -208,6 +219,7 @@ class TR4EngineMixin:
 
     def _abortado(self, seq):
         return getattr(self, "cancelar_conexao", False) or seq != getattr(self, "_con_seq", 0)
+
     def _conectar_tudo_thread(self, seq, addr, nome_dev):
         log_hs = []
         try:
@@ -304,7 +316,6 @@ class TR4EngineMixin:
             Clock.schedule_once(
                 lambda dt, err=str(e): self._falha_conexao(f"FALHA CONEXAO: {err[:34]}", log_hs)
             )
-
     def _sucesso_conexao(self, nome_dev):
         self._atualizar_estado_conexao("CONECTADO")
         self._atualizar_status(f"ECU CONECTADA ({nome_dev}) | K-LINE ATIVO", (0.2, 0.95, 0.45, 1))
@@ -357,6 +368,7 @@ class TR4EngineMixin:
         finally:
             if lock:
                 lock.release()
+
     def parse_bytes_kwp(self, resp_str, cmd_enviado):
         limpo = "".join(c for c in resp_str.upper() if c in "0123456789ABCDEF")
         prefixo_ok = "61" + cmd_enviado[2:4].upper()
@@ -425,7 +437,6 @@ class TR4EngineMixin:
                     pass
             Clock.schedule_once(self.atualizar_interface)
             time.sleep(0.12 if self.modo_simulacao else 0.04)
-
     def atualizar_interface(self, dt):
         for pid_id, widgets in self.cards_ui.items():
             lbl_val, lbl_mm, unidade = widgets
@@ -507,12 +518,86 @@ class TR4EngineMixin:
             self.writer_log = None
         if hasattr(self, "lbl_log_info") and arq:
             self.lbl_log_info.text = f"LOG ENCERRADO E SALVO ({qtd} linhas):\n{arq}"
+
+    def ler_info_ecu(self, *args):
+        if self.modo_simulacao:
+            self.lbl_eng.text = (
+                "Codigo Projeto ECU: CA130195\n\n"
+                "Numero HW: IAW4AMHWM44  (Ver: 00)\n\n"
+                "Numero SW: 0401BA83  (Ver: 0000)\n\n"
+                "Homologacao: 4AMMS  |  ISO: 0000000000\n\n"
+                "Data Programacao: 20/10/2009\n\n"
+                "Reescritas Flash: 1  |  Odo Reescr: 0 km\n\n"
+                "Odometro Real ECU: 69.456 km"
+            )
+            return
+        if not self.rodando or not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
+            return
+        self.rodando = False
+        self.lbl_eng.text = "Lendo identificacao completa e odometro da ECU..."
+        threading.Thread(target=self._ler_info_ecu_thread, daemon=True).start()
+
+    def _ler_info_ecu_thread(self):
+        def _ascii(b_list):
+            return "".join(chr(x) if 32 <= x <= 126 else "" for x in b_list).strip()
+
+        time.sleep(0.25)
+        b80 = self.parse_bytes_kwp(self.enviar_comando_raw("2180", timeout=2.0), "2180")
+        b71 = self.parse_bytes_kwp(self.enviar_comando_raw("2171", timeout=1.5), "2171")
+        b72 = self.parse_bytes_kwp(self.enviar_comando_raw("2172", timeout=1.5), "2172")
+        b73 = self.parse_bytes_kwp(self.enviar_comando_raw("2173", timeout=1.5), "2173")
+
+        if len(b80) >= 61:
+            desenho = _ascii(b80[0:11]) or "N/D"
+            hw = _ascii(b80[11:22]) or "N/D"
+            hw_v0 = itemgetter(22)(b80)
+            hw_ver = f"{hw_v0:02X}"
+            sw = _ascii(b80[23:34]) or "N/D"
+            sw_v0, sw_v1 = itemgetter(34, 35)(b80)
+            sw_ver = f"{sw_v0:02X}{sw_v1:02X}"
+            homolog = _ascii(b80[36:42]) or "N/D"
+            iso = "".join(f"{x:02X}" for x in b80[42:47])
+            d_dia, d_mes, d_ano = itemgetter(60, 59, 58)(b80)
+            data_prog = f"{d_dia:02X}/{d_mes:02X}/20{d_ano:02X}"
+        else:
+            desenho, hw, hw_ver, sw, sw_ver, homolog, iso, data_prog = ("N/D", "N/D", "00", "N/D", "0000", "N/D", "N/D", "N/D")
+
+        odo_txt = "Nao disponivel"
+        if len(b71) >= 3:
+            b_o0, b_o1, b_o2 = itemgetter(0, 1, 2)(b71)
+            km_val = (b_o0 << 16) | (b_o1 << 8) | b_o2
+            odo_txt = f"{km_val:,} km".replace(",", ".")
+
+        reescr = 0
+        if len(b72) >= 2:
+            r0, r1 = itemgetter(0, 1)(b72)
+            reescr = (r0 << 8) | r1
+
+        odo_reescr = 0
+        if len(b73) >= 3:
+            or0, or1, or2 = itemgetter(0, 1, 2)(b73)
+            odo_reescr = (or0 << 16) | (or1 << 8) | or2
+
+        texto = (
+            f"Codigo Projeto ECU: {desenho}\n\n"
+            f"Numero HW: {hw}  (Ver: {hw_ver})\n\n"
+            f"Numero SW: {sw}  (Ver: {sw_ver})\n\n"
+            f"Homologacao: {homolog}  |  ISO: {iso}\n\n"
+            f"Data Programacao: {data_prog}\n\n"
+            f"Reescritas Flash: {reescr}  |  Odo Reescr: {odo_reescr} km\n\n"
+            f"Odometro Real ECU: {odo_txt}"
+        )
+        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", texto))
+        if self.estado_conexao == "CONECTADO" and self.bt_socket:
+            self.rodando = True
+            self.loop_leitura()
     def ler_dtcs(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = "Nenhuma falha armazenada na ECU."
             return
         if not self.rodando or not self.bt_out or not self.bt_in:
-            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ECU primeiro."
+            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
             return
         self.rodando = False
         self.lbl_eng.text = "Consultando memoria de falhas (DTC)..."
@@ -539,7 +624,7 @@ class TR4EngineMixin:
         else:
             msg = f"Retorno da ECU:\n{resp if resp else 'Sem resposta'}"
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", msg))
-        if self.bt_socket:
+        if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
 
@@ -548,7 +633,7 @@ class TR4EngineMixin:
             self.lbl_eng.text = "Memoria de falhas limpa!"
             return
         if not self.rodando or not self.bt_out or not self.bt_in:
-            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ECU primeiro."
+            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
             return
         self.rodando = False
         threading.Thread(target=self._apagar_dtcs_thread, daemon=True).start()
@@ -558,7 +643,7 @@ class TR4EngineMixin:
         resp = self.enviar_comando_raw("14FF00", timeout=2.0)
         msg = "Falhas apagadas com sucesso!" if "54" in resp.upper() else f"Comando enviado ({resp})"
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", msg))
-        if self.bt_socket:
+        if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
 
@@ -567,7 +652,7 @@ class TR4EngineMixin:
             self.lbl_eng.text = "Simulacao:\n[0x10] Injecao Motor (IAW 4AM) - ATIVO\n[0x18] Cambio AT - Sem resposta"
             return
         if not self.bt_socket or not self.bt_out or not self.bt_in:
-            self.lbl_eng.text = "Conecte o Bluetooth primeiro!"
+            self.lbl_eng.text = "Conecte o scanner primeiro!"
             return
         self.rodando = False
         self.lbl_eng.text = "Encerrando sessao atual e buscando modulos no Pino 7...\n\nAguarde ~20 segundos..."
@@ -590,6 +675,8 @@ class TR4EngineMixin:
         ]
         resultados = []
         for addr, nome in alvos:
+            if self.estado_conexao != "CONECTADO":
+                return
             msg_step = f"Testando endereco 0x{addr} ({nome})..."
             Clock.schedule_once(lambda dt, m=msg_step: setattr(self.lbl_eng, "text", m))
             self.enviar_comando_raw("ATSP5", timeout=0.8)
@@ -607,6 +694,8 @@ class TR4EngineMixin:
             self.enviar_comando_raw("ATPC", timeout=0.8)
             time.sleep(0.35)
 
+        if self.estado_conexao != "CONECTADO":
+            return
         self.enviar_comando_raw("ATSP5", timeout=0.8)
         self.enviar_comando_raw("ATST64", timeout=0.8)
         self.enviar_comando_raw("ATSH8110F1", timeout=0.8)
@@ -616,27 +705,35 @@ class TR4EngineMixin:
 
         texto_final = "Resultado da Busca de Modulos (Pino 7):\n\n" + "\n".join(resultados)
         Clock.schedule_once(lambda dt, t=texto_final: setattr(self.lbl_eng, "text", t))
-        if self.bt_socket:
+        if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
 
     def desconectar_ecu(self, *args):
+        self.cancelar_conexao = True
+        self._con_seq = getattr(self, "_con_seq", 0) + 1
+        estava_conectado = (getattr(self, "estado_conexao", "") == "CONECTADO")
         self.rodando = False
         self.varrendo = False
         self.modo_simulacao = False
         self.parar_gravacao_log()
+
+        if estava_conectado and self.bt_out and self.bt_in:
+            try:
+                self.enviar_comando_raw("82", timeout=0.5)
+                self.enviar_comando_raw("ATPC", timeout=0.4)
+            except Exception:
+                pass
+
+        self._fechar_socket_bt()
         self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
         self.valores_min = {}
         self.valores_max = {}
         self.atualizar_interface(0)
+        self._atualizar_estado_conexao("DESCONECTADO")
         if hasattr(self, "lbl_eng"):
-            self.lbl_eng.text = "ECU desconectada."
-        if self.bt_socket:
-            self.lbl_status.text = "ECU DESCONECTADA | BLUETOOTH ATIVO"
-            self.lbl_status.color = (0.3, 0.85, 1.0, 1)
-        else:
-            self.lbl_status.text = "DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)"
-            self.lbl_status.color = (1, 0.78, 0.2, 1)
+            self.lbl_eng.text = "Desconectado."
+        self._atualizar_status("DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)", (1, 0.78, 0.2, 1))
 
     def iniciar_varredura_ecu(self, *args):
         if getattr(self, "varrendo", False):
@@ -645,7 +742,7 @@ class TR4EngineMixin:
             self.lbl_eng.text = "Simulacao: 2131, 213B, 2147 ativos."
             return
         if not self.rodando or not self.bt_out or not self.bt_in:
-            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ECU primeiro."
+            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
             return
         self.rodando = False
         self.varrendo = True
@@ -690,6 +787,6 @@ class TR4EngineMixin:
 
         msg_fim = f"Varredura finalizada!\n\nTotal encontrados: {len(encontrados)}\n\n{resumo}"
         Clock.schedule_once(lambda dt, m=msg_fim: setattr(self.lbl_eng, "text", m))
-        if self.bt_socket:
+        if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
