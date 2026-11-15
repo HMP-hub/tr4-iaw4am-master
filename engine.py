@@ -506,11 +506,11 @@ class TR4EngineMixin:
             self.lbl_eng.text = "Conecte o Bluetooth primeiro!"
             return
         self.rodando = False
-        self.lbl_eng.text = "Varrendo enderecos fisicos no Pino 7 (K-Line)...\n\nAguarde ~15 segundos..."
+        self.lbl_eng.text = "Varrendo enderecos fisicos no Pino 7 (K-Line)...\n\nAguarde ~20 segundos..."
         threading.Thread(target=self._buscar_modulos_thread, daemon=True).start()
 
     def _buscar_modulos_thread(self):
-        time.sleep(0.3)
+        time.sleep(0.35)
         alvos = [
             ("10", "Injecao Eletronica (ECU)"),
             ("11", "Motor / Coprocessador"),
@@ -522,10 +522,14 @@ class TR4EngineMixin:
         ]
         resultados = []
         for addr, nome in alvos:
-            Clock.schedule_once(lambda dt, a=addr, n=nome: setattr(self.lbl_eng, "text", f"Testando endereco 0x{a} ({n})..."))
+            msg_step = f"Testando endereco 0x{addr} ({nome})..."
+            Clock.schedule_once(lambda dt, m=msg_step: setattr(self.lbl_eng, "text", m))
+            self.enviar_comando_raw("ATPC", timeout=0.8)
+            time.sleep(0.55)
+            self.enviar_comando_raw("ATSP5", timeout=0.8)
             self.enviar_comando_raw(f"ATSH81{addr}F1", timeout=0.8)
             self.enviar_comando_raw(f"ATWM81{addr}F13E", timeout=0.8)
-            r_fi = self.enviar_comando_raw("ATFI", timeout=2.0)
+            r_fi = self.enviar_comando_raw("ATFI", timeout=2.5)
             r_ses = self.enviar_comando_raw("1081", timeout=1.5)
             limpo = "".join(c for c in (r_fi + r_ses).upper() if c in "0123456789ABCDEF")
             if "OK" in r_fi.upper() or "5081" in limpo or "C1" in limpo:
@@ -533,13 +537,16 @@ class TR4EngineMixin:
             else:
                 resultados.append(f"[0x{addr}] {nome}: Sem resposta")
 
-        self.enviar_comando_raw("ATSH8110F1", timeout=1.0)
-        self.enviar_comando_raw("ATWM8110F13E", timeout=1.0)
+        self.enviar_comando_raw("ATPC", timeout=0.8)
+        time.sleep(0.55)
+        self.enviar_comando_raw("ATSP5", timeout=0.8)
+        self.enviar_comando_raw("ATSH8110F1", timeout=0.8)
+        self.enviar_comando_raw("ATWM8110F13E", timeout=0.8)
         self.enviar_comando_raw("ATFI", timeout=2.5)
         self.enviar_comando_raw("1081", timeout=1.5)
 
         texto_final = "Resultado da Busca de Modulos (Pino 7):\n\n" + "\n".join(resultados)
-        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", texto_final))
+        Clock.schedule_once(lambda dt, t=texto_final: setattr(self.lbl_eng, "text", t))
         if self.bt_socket:
             self.rodando = True
             self.loop_leitura()
@@ -591,11 +598,8 @@ class TR4EngineMixin:
                 break
             cmd = f"21{code:02X}"
             if code % 8 == 0:
-                Clock.schedule_once(
-                    lambda dt, c=cmd, n=len(encontrados): setattr(
-                        self.lbl_eng, "text", f"Varrendo endereco {c} de 21FF...\n\nPIDs ativos encontrados: {n}"
-                    )
-                )
+                msg_prog = f"Varrendo endereco {cmd} de 21FF...\n\nPIDs ativos encontrados: {len(encontrados)}"
+                Clock.schedule_once(lambda dt, m=msg_prog: setattr(self.lbl_eng, "text", m))
             resp = self.enviar_comando_raw(cmd, timeout=0.9)
             limpo = "".join(c for c in resp.upper() if c in "0123456789ABCDEF")
             prefixo_ok = f"61{code:02X}"
@@ -615,11 +619,8 @@ class TR4EngineMixin:
         except Exception as e:
             resumo = f"Erro ao salvar arquivo: {e}"
 
-        Clock.schedule_once(
-            lambda dt: setattr(
-                self.lbl_eng, "text", f"Varredura finalizada!\n\nTotal encontrados: {len(encontrados)}\n\n{resumo}"
-            )
-        )
+        msg_fim = f"Varredura finalizada!\n\nTotal encontrados: {len(encontrados)}\n\n{resumo}"
+        Clock.schedule_once(lambda dt, m=msg_fim: setattr(self.lbl_eng, "text", m))
         if self.bt_socket:
             self.rodando = True
             self.loop_leitura()
