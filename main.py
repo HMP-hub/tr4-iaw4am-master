@@ -246,8 +246,8 @@ class TR4ScannerApp(App, TR4EngineMixin):
             card = BoxLayout(
                 orientation="vertical",
                 size_hint_y=None,
-                height=dp(96),
-                padding=dp(8),
+                height=dp(106),
+                padding=(dp(6), dp(6)),
                 spacing=dp(2),
             )
             with card.canvas.before:
@@ -258,26 +258,27 @@ class TR4ScannerApp(App, TR4EngineMixin):
 
             lbl_nome = Label(
                 text=p["nome"],
-                font_size="11sp",
-                color=(0.72, 0.78, 0.86, 1),
-                halign="left",
+                font_size="13sp",
+                bold=True,
+                color=(0.82, 0.87, 0.94, 1),
+                halign="center",
                 valign="middle",
-                size_hint_y=0.28,
+                size_hint_y=0.36,
             )
             lbl_nome.bind(size=lambda inst, v: setattr(inst, "text_size", v))
 
             lbl_val = Label(
                 text="--",
-                font_size="20sp",
+                font_size="21sp",
                 bold=True,
                 color=(0.25, 0.92, 0.55, 1),
-                halign="left",
+                halign="center",
                 valign="middle",
-                size_hint_y=0.44,
+                size_hint_y=0.40,
             )
             lbl_val.bind(size=lambda inst, v: setattr(inst, "text_size", v))
 
-            rodape = BoxLayout(size_hint_y=0.28)
+            rodape = BoxLayout(size_hint_y=0.24)
             lbl_min = Label(text="MIN: --", font_size="10sp", color=(0.55, 0.75, 0.95, 1), halign="left")
             lbl_max = Label(text="MAX: --", font_size="10sp", color=(0.95, 0.65, 0.45, 1), halign="right")
             rodape.add_widget(lbl_min)
@@ -296,27 +297,40 @@ class TR4ScannerApp(App, TR4EngineMixin):
         scr = Screen(name="pids")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
 
-        top_btns = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(6))
+        top_btns = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
         b_rap = Button(
-            text="PADRAO RAPIDO",
-            font_size="11sp",
+            text="PADRAO\nRAPIDO",
+            font_size="10.5sp",
             bold=True,
+            halign="center",
             background_normal="",
             background_color=(0.15, 0.48, 0.72, 1),
         )
         b_rap.bind(on_release=lambda *a: self._aplicar_preset_pids("rapido"))
 
         b_todos = Button(
-            text="MARCAR TODOS",
-            font_size="11sp",
+            text="MARCAR\nTODOS",
+            font_size="10.5sp",
             bold=True,
+            halign="center",
             background_normal="",
             background_color=(0.18, 0.55, 0.35, 1),
         )
         b_todos.bind(on_release=lambda *a: self._aplicar_preset_pids("todos"))
 
+        b_nenhum = Button(
+            text="DESMARCAR\nTODOS",
+            font_size="10.5sp",
+            bold=True,
+            halign="center",
+            background_normal="",
+            background_color=(0.68, 0.24, 0.24, 1),
+        )
+        b_nenhum.bind(on_release=lambda *a: self._aplicar_preset_pids("nenhum"))
+
         top_btns.add_widget(b_rap)
         top_btns.add_widget(b_todos)
+        top_btns.add_widget(b_nenhum)
         box.add_widget(top_btns)
 
         scroll = ScrollView(bar_width=dp(6))
@@ -355,7 +369,12 @@ class TR4ScannerApp(App, TR4EngineMixin):
     def _aplicar_preset_pids(self, modo):
         for p in PIDS_DB:
             pid_id = p["id"]
-            novo = True if modo == "todos" else p["rapido"]
+            if modo == "todos":
+                novo = True
+            elif modo == "nenhum":
+                novo = False
+            else:
+                novo = p["rapido"]
             self.selecionados[pid_id] = novo
             if pid_id in self.checks_pids:
                 self.checks_pids[pid_id].active = novo
@@ -416,7 +435,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
         self.lbl_log_info = Label(
             text="Selecione os PIDs abaixo e clique em INICIAR LOG CSV.\nOs arquivos sao salvos em /sdcard/Download.",
             size_hint_y=None,
-            height=dp(58),
+            height=dp(52),
             font_size="12sp",
             halign="left",
             valign="middle",
@@ -459,14 +478,54 @@ class TR4ScannerApp(App, TR4EngineMixin):
         barra_log.add_widget(b_parar)
         box.add_widget(barra_log)
 
+        barra_sel_log = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(5))
+        bl_rap = Button(
+            text="PADRAO\nRAPIDO",
+            font_size="10.5sp",
+            bold=True,
+            halign="center",
+            background_normal="",
+            background_color=(0.15, 0.48, 0.72, 1),
+        )
+        bl_rap.bind(on_release=lambda *a: self._aplicar_preset_log("rapido"))
+
+        bl_todos = Button(
+            text="MARCAR\nTODOS",
+            font_size="10.5sp",
+            bold=True,
+            halign="center",
+            background_normal="",
+            background_color=(0.18, 0.55, 0.35, 1),
+        )
+        bl_todos.bind(on_release=lambda *a: self._aplicar_preset_log("todos"))
+
+        bl_nenhum = Button(
+            text="DESMARCAR\nTODOS",
+            font_size="10.5sp",
+            bold=True,
+            halign="center",
+            background_normal="",
+            background_color=(0.68, 0.24, 0.24, 1),
+        )
+        bl_nenhum.bind(on_release=lambda *a: self._aplicar_preset_log("nenhum"))
+
+        barra_sel_log.add_widget(bl_rap)
+        barra_sel_log.add_widget(bl_todos)
+        barra_sel_log.add_widget(bl_nenhum)
+        box.add_widget(barra_sel_log)
+
         scroll = ScrollView(bar_width=dp(6))
         lista = GridLayout(cols=1, spacing=dp(4), size_hint_y=None)
         lista.bind(minimum_height=lista.setter("height"))
+        self.checks_log = {}
+
         for p in PIDS_DB:
             pid_id = p["id"]
             linha = BoxLayout(size_hint_y=None, height=dp(38), padding=(dp(6), 0))
             chk = CheckBox(active=self.selecionados_log.get(pid_id, False), size_hint_x=0.14)
             chk.bind(active=lambda inst, val, k=pid_id: self.selecionados_log.update({k: bool(val)}))
+            self.checks_log[pid_id] = chk
+
             lbl = Label(
                 text=f"{p['id']} - {p['nome']}",
                 font_size="12sp",
@@ -482,6 +541,19 @@ class TR4ScannerApp(App, TR4EngineMixin):
         box.add_widget(scroll)
         scr.add_widget(box)
         return scr
+
+    def _aplicar_preset_log(self, modo):
+        for p in PIDS_DB:
+            pid_id = p["id"]
+            if modo == "todos":
+                novo = True
+            elif modo == "nenhum":
+                novo = False
+            else:
+                novo = p["rapido"]
+            self.selecionados_log[pid_id] = novo
+            if pid_id in self.checks_log:
+                self.checks_log[pid_id].active = novo
 
     # -------------------------------------------------------------------------
     # Aba 5: BOLETIM (Diagnostico automatico pos-viagem)
