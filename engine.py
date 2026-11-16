@@ -18,7 +18,7 @@ from pids import PIDS_DB
 
 PIDS_VIGILANCIA_BG = {
     "RPM", "VEL", "MAP", "ECT", "TPS", "LAMBDA_1",
-    "STFT", "LTFT", "CORR_IGN", "IAC", "RPM_ALVO", "CLOSED_LOOP",
+    "STFT", "LTFT", "KNOCK_SENSOR", "CORR_IGN", "IAC", "RPM_ALVO", "CLOSED_LOOP",
 }
 
 CMDS_MODO_01_PROBE = [
@@ -65,6 +65,7 @@ class TR4EngineMixin:
             "tempo_acima_98c": 0.0,
             "ultimo_ts": None,
             "knock_eventos": 0,
+            "knock_sensor_max_v": 0.0,
             "knock_pior_graus": 0.0,
             "knock_pior_rpm": 0,
             "knock_pior_map": 0.0,
@@ -90,11 +91,13 @@ class TR4EngineMixin:
         if hasattr(self, "lbl_boletim"):
             self.lbl_boletim.text = (
                 "Nova viagem iniciada! Telemetria zerada.\n\n"
-                "Pode rodar normalmente; o sistema esta vigiando temperatura, detonacao (knock), "
+                "Pode rodar normalmente; o sistema esta vigiando temperatura, sensor de knock, "
                 "sonda lambda pre-cat, correcoes de mistura e marcha lenta em segundo plano."
             )
 
     def _processar_amostra_telemetria(self):
+        if not hasattr(self, "tel"):
+            self._init_telemetria_viagem()
         t = self.tel
         agora = time.time()
         dt = 0.0 if t["ultimo_ts"] is None else min(2.0, max(0.0, agora - t["ultimo_ts"]))
@@ -109,6 +112,7 @@ class TR4EngineMixin:
         lam = self.valores_atuais.get("LAMBDA_1")
         stft = self.valores_atuais.get("STFT")
         ltft = self.valores_atuais.get("LTFT")
+        kv = self.valores_atuais.get("KNOCK_SENSOR")
         corr = self.valores_atuais.get("CORR_IGN")
         iac = self.valores_atuais.get("IAC")
         cl = self.valores_atuais.get("CLOSED_LOOP")
@@ -135,19 +139,27 @@ class TR4EngineMixin:
             if ect >= 98.0:
                 t["tempo_acima_98c"] += dt
 
-        # Detonacao (Knock / Retirada de Avanco)
-        if isinstance(corr, (int, float)):
-            sob_carga = (isinstance(tps, (int, float)) and tps >= 12.0) or (isinstance(mp, (int, float)) and mp >= 52.0)
-            if corr <= -0.8 and sob_carga:
-                if not t["knock_ativo_frame"]:
-                    t["knock_eventos"] += 1
-                    t["knock_ativo_frame"] = True
-                if corr < t["knock_pior_graus"]:
-                    t["knock_pior_graus"] = corr
-                    t["knock_pior_rpm"] = int(rpm) if isinstance(rpm, (int, float)) else 0
-                    t["knock_pior_map"] = float(mp) if isinstance(mp, (int, float)) else 0.0
-            elif corr > -0.4:
-                t["knock_ativo_frame"] = False
+        # Sensor de Knock (V) + Atraso de Ponto (graus)
+        if isinstance(kv, (int, float)) and kv > t["knock_sensor_max_v"]:
+            t["knock_sensor_max_v"] = kv
+
+        sob_carga = (isinstance(tps, (int, float)) and tps >= 12.0) or (isinstance(mp, (int, float)) and mp >= 52.0)
+        knock_detectado = (
+            (isinstance(kv, (int, float)) and kv >= 2.50 and sob_carga)
+            or (isinstance(corr, (int, float)) and corr <= -0.8 and sob_carga)
+        )
+        if knock_detectado:
+            if not t["knock_ativo_frame"]:
+                t["knock_eventos"] += 1
+                t["knock_ativo_frame"] = True
+                t["knock_pior_rpm"] = int(rpm) if isinstance(rpm, (int, float)) else 0
+                t["knock_pior_map"] = float(mp) if isinstance(mp, (int, float)) else 0.0
+            if isinstance(corr, (int, float)) and corr < t["knock_pior_graus"]:
+                t["knock_pior_graus"] = corr
+                t["knock_pior_rpm"] = int(rpm) if isinstance(rpm, (int, float)) else 0
+                t["knock_pior_map"] = float(mp) if isinstance(mp, (int, float)) else 0.0
+        else:
+            t["knock_ativo_frame"] = False
 
         # Sonda Lambda Pre-Cat & Mistura em Malha Fechada Quente
         quente = isinstance(ect, (int, float)) and ect >= 75.0
@@ -199,19 +211,24 @@ class TR4EngineMixin:
         alerta = ""
         if isinstance(ect, (int, float)) and ect >= 103.0:
             alerta = f"ALERTA CRITICO: TEMPERATURA AGUA {ect:.0f} C!"
+        elif isinstance(kv, (int, float)) and kv >= 3.20 and sob_carga:
+            alerta = f"ALERTA KNOCK: SENSOR EM {kv:.2f} V!"
         elif isinstance(corr, (int, float)) and corr <= -6.0:
-            alerta = f"ALERTA KNOCK SEVERO: RETIRADA DE {corr:.1f} GRAUS!"
+            alerta = f"ALERTA KNOCK SEVERO: ATRASO DE {corr:.1f} GRAUS!"
         t["alerta_critico_atual"] = alerta
 
     def gerar_texto_boletim(self):
+        if not hasattr(self, "tel"):
+            self._init_telemetria_viagem()
         t = self.tel
         dur_s = max(1, int(time.time() - t["inicio_ts"]))
         mins, segs = divmod(dur_s, 60)
 
         ev_k = t["knock_eventos"]
+        kv_max = t["knock_sensor_max_v"]
         pior_k = t["knock_pior_graus"]
-        if ev_k == 0 or pior_k > -1.0:
-            sev_k = "NORMAL (Sem detonacao relevante)"
+        if ev_k == 0 and kv_max < 2.50 and pior_k > -1.0:
+            sev_k = "NORMAL (Sensor < 1.50 V / Sem detonacao relevante)"
         elif pior_k >= -3.0 and ev_k <= 6:
             sev_k = "LEVE (Pontual em retomada - aceitavel)"
         elif pior_k >= -5.5:
@@ -221,8 +238,8 @@ class TR4EngineMixin:
 
         det_k = (
             f"  - Gravidade: {sev_k}\n"
-            f"  - Eventos sob carga: {ev_k} ocorrencia(s)\n"
-            f"  - Pico maximo retirado: {pior_k:.1f} graus"
+            f"  - Pico Sensor Knock: {kv_max:.2f} V (Ref: <1.50 V OK | >2.50 V Knock)\n"
+            f"  - Eventos sob carga: {ev_k} ocorrencia(s) | Atraso max ECU: {pior_k:.1f} graus"
             + (f" (a {t['knock_pior_rpm']} rpm / {t['knock_pior_map']:.1f} kPa)" if ev_k > 0 else "")
         )
 
@@ -289,7 +306,7 @@ class TR4EngineMixin:
             f"=== BOLETIM TECNICO DE TELEMETRIA - TR4 2.0 ===\n"
             f"Duracao monitorada: {mins}m {segs}s  |  Amostras: {t['amostras']}\n"
             f"RPM Max: {t['rpm_max']:.0f} rpm  |  Vel Max: {t['vel_max']:.0f} km/h\n\n"
-            f"1. DETONACAO / KNOCK (RETIRADA DE PONTO)\n{det_k}\n\n"
+            f"1. DETONACAO / SENSOR KNOCK\n{det_k}\n\n"
             f"2. SISTEMA DE ARREFECIMENTO\n{det_ect}\n\n"
             f"3. SONDA LAMBDA PRE-CAT & MISTURA\n{det_mist}\n\n"
             f"4. VACUO COLETOR & MARCHA LENTA (IAC)\n{det_lenta}"
@@ -308,6 +325,8 @@ class TR4EngineMixin:
                 f.write(f"Gerado em: {datetime.now()}\n\n" + texto)
             if hasattr(self, "lbl_boletim"):
                 self.lbl_boletim.text = f"BOLETIM SALVO EM:\n{nome_arq}\n\n" + texto
+            if hasattr(self, "lbl_eng"):
+                self.lbl_eng.text = f"Boletim salvo com sucesso em:\n{nome_arq}"
         except Exception as e:
             if hasattr(self, "lbl_boletim"):
                 self.lbl_boletim.text = f"Erro ao salvar boletim: {e}"
@@ -400,6 +419,7 @@ class TR4EngineMixin:
     # Simulacao, permissoes e seletor Bluetooth (conecta direto ao escolher)
     # -------------------------------------------------------------------------
     def iniciar_simulacao(self, *args):
+        self._init_telemetria_viagem()
         self.desconectar_ecu()
         self._init_telemetria_viagem()
         self.modo_simulacao = True
@@ -626,7 +646,7 @@ class TR4EngineMixin:
         if hasattr(self, "lbl_eng"):
             self.lbl_eng.text = (
                 "ECU conectada com sucesso!\n\n"
-                "Para calibrar 100% dos PIDs, use CAPTURAR CALIBRACAO nos 4 estados:\n"
+                "Para calibrar 100% dos PIDs, toque em CAPTURAR CALIBRACAO nos 4 estados:\n"
                 "1) Chave ligada, motor frio desligado\n"
                 "2) Marcha lenta quente (80-94 C)\n"
                 "3) Ventoinha armada (~97 C)\n"
@@ -660,8 +680,9 @@ class TR4EngineMixin:
         self.atualizar_tela_boletim()
 
     def _atualizar_status(self, texto, cor):
-        self.lbl_status.text = texto
-        self.lbl_status.color = cor
+        if hasattr(self, "lbl_status"):
+            self.lbl_status.text = texto
+            self.lbl_status.color = cor
 
     def _limpar_buffer_bt(self):
         try:
@@ -820,6 +841,8 @@ class TR4EngineMixin:
             time.sleep(0.12 if self.modo_simulacao else 0.04)
 
     def atualizar_interface(self, dt):
+        if not hasattr(self, "tel"):
+            self._init_telemetria_viagem()
         for pid_id, widgets in self.cards_ui.items():
             lbl_val, lbl_min, lbl_max, unidade = widgets
             val = self.valores_atuais.get(pid_id, "--")
@@ -969,7 +992,6 @@ class TR4EngineMixin:
 
         linhas.append(f"\n==================== {desc_est} [{datetime.now().strftime('%H:%M:%S')}] ====================")
 
-        # 1. Sondagem Modo 01 padrao OBD2 (entrega formulas ISO/SAE oficiais se suportado)
         m01_ativos = []
         for cmd01, nome01 in CMDS_MODO_01_PROBE:
             resp01 = self.enviar_comando_raw(cmd01, timeout=0.7)
@@ -983,7 +1005,6 @@ class TR4EngineMixin:
         else:
             linhas.append("[MODO 01 OBD2] Nenhum PID respondeu sob cabecalho KWP 8110F1")
 
-        # 2. Tres amostras consecutivas de todos os blocos vivos Modo 21
         for amostra in range(1, 4):
             linhas.append(f"\n--- AMOSTRA {amostra}/3 ({datetime.now().strftime('%H:%M:%S')}) ---")
             for cmd in CMDS_MODO_21_VIVOS:

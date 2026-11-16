@@ -1,7 +1,7 @@
 # coding: utf-8
 # Mapa de leitura da ECU Magneti Marelli IAW 4AM (Pajero TR4 flex), KWP2000 modo 21.
 #
-# "b" e a lista de bytes DEPOIS do cabecalho "61 xx" (o parse_bytes_kwp ja o tira).
+# "b" e a lista de bytes DEPOIS do cabecalho "61 xx".
 # Na convencao OBDLink/Torque: A = b[0], B = b[1].
 # Valores de 16 bits sao big-endian.
 import math
@@ -78,7 +78,21 @@ def _calc_avanco(b):
     return deg
 
 
+def _calc_knock_sensor_v(b):
+    # Sinal do sensor piezo de detonacao (0..5.00 V)
+    # < 1.50 V = ruido mecanico normal | 1.50-2.50 V = atencao | > 2.50 V = knock
+    if len(b) >= 2:
+        raw16 = _u16(b, 0)
+        if raw16 is not None and raw16 <= 1023:
+            return round((raw16 / 1023.0) * 5.0, 2)
+    a = _u8(b, 0)
+    if a is None:
+        return None
+    return round((a / 255.0) * 5.0, 2)
+
+
 def _calc_corr_ign(b):
+    # Atraso/retirada de avanco aplicada pela ECU ao detectar detonacao (graus)
     v = _s16(b, 0)
     if v is None:
         return None
@@ -199,7 +213,31 @@ PIDS_DB = [
         "sim": lambda t: round(11.5 + 1.5 * math.sin(t * 1.8), 1),
     },
 
-    # --- Complementares confirmados (selecionaveis em PIDS / LOG CSV) --------------------------------------------
+    # --- Complementares (selecionaveis em PIDS / GRAFICO / LOG CSV) ----------------------------------------------
+    {
+        "id": "KNOCK_SENSOR",
+        "nome": "Sensor Knock (<1.5V OK | >2.5V Knock)",
+        "unidade": "V",
+        "cmd": "2168",
+        "rapido": False,
+        "conf": "provavel",
+        "min": 0.0,
+        "max": 5.0,
+        "calc": _calc_knock_sensor_v,
+        "sim": lambda t: round(2.85 if math.sin(t * 0.9) > 0.92 else 0.65 + 0.15 * abs(math.sin(t * 2.5)), 2),
+    },
+    {
+        "id": "CORR_IGN",
+        "nome": "Atraso Ponto por Knock",
+        "unidade": "graus",
+        "cmd": "216A",
+        "rapido": False,
+        "conf": "provavel",
+        "min": -20,
+        "max": 15,
+        "calc": _calc_corr_ign,
+        "sim": lambda t: -2.0 if math.sin(t * 0.9) > 0.92 else 0.0,
+    },
     {
         "id": "LTFT",
         "nome": "Adaptativo Mistura (LTFT)",
@@ -259,18 +297,6 @@ PIDS_DB = [
         "max": 100,
         "calc": lambda b: _calc_temp(b, 4),
         "sim": lambda t: round(36.0 + 1.5 * math.sin(t * 0.15), 0),
-    },
-    {
-        "id": "CORR_IGN",
-        "nome": "Retirada Ponto / Knock",
-        "unidade": "graus",
-        "cmd": "216A",
-        "rapido": False,
-        "conf": "ok",
-        "min": -20,
-        "max": 15,
-        "calc": _calc_corr_ign,
-        "sim": lambda t: -1.5 if math.sin(t * 0.9) > 0.92 else 0.0,
     },
     {
         "id": "IAC",
