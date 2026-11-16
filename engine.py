@@ -7,6 +7,7 @@ import threading
 from datetime import datetime
 from operator import itemgetter
 from kivy.clock import Clock
+from kivy.metrics import dp
 from kivy.uix.popup import Popup
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.scrollview import ScrollView
@@ -15,8 +16,277 @@ from kivy.uix.button import Button
 from kivy.uix.label import Label
 from pids import PIDS_DB
 
+PIDS_VIGILANCIA_BG = {
+    "RPM", "VEL", "MAP", "ECT", "TPS", "LAMBDA_1",
+    "STFT", "LTFT", "CORR_IGN", "IAC", "RPM_ALVO", "CLOSED_LOOP",
+}
+
 
 class TR4EngineMixin:
+    # -------------------------------------------------------------------------
+    # Telemetria preditiva em segundo plano & Boletim Tecnico Pos-Viagem
+    # -------------------------------------------------------------------------
+    def _init_telemetria_viagem(self):
+        self.tel = {
+            "inicio_ts": time.time(),
+            "amostras": 0,
+            "amostras_mov": 0,
+            "vel_max": 0.0,
+            "rpm_max": 0.0,
+            "ect_ini": None,
+            "ect_min": None,
+            "ect_max": None,
+            "tempo_para_80c": None,
+            "tempo_acima_98c": 0.0,
+            "ultimo_ts": None,
+            "knock_eventos": 0,
+            "knock_pior_graus": 0.0,
+            "knock_pior_rpm": 0,
+            "knock_pior_map": 0.0,
+            "knock_ativo_frame": False,
+            "lambda_ultimo_lado": None,
+            "lambda_trocas": 0,
+            "tempo_cl_quente": 0.0,
+            "stft_soma": 0.0,
+            "stft_n": 0,
+            "stft_min": None,
+            "stft_max": None,
+            "ltft_ultimo": None,
+            "pobre_carga_eventos": 0,
+            "map_lenta_soma": 0.0,
+            "map_lenta_n": 0,
+            "iac_lenta_soma": 0.0,
+            "iac_lenta_n": 0,
+            "alerta_critico_atual": "",
+        }
+
+    def reiniciar_telemetria_viagem(self, *args):
+        self._init_telemetria_viagem()
+        if hasattr(self, "lbl_boletim"):
+            self.lbl_boletim.text = (
+                "Nova viagem iniciada! Telemetria zerada.\n\n"
+                "Pode rodar normalmente; o sistema esta vigiando temperatura, detonacao (knock), "
+                "sonda lambda, correcoes de mistura e marcha lenta em segundo plano."
+            )
+
+    def _processar_amostra_telemetria(self):
+        t = self.tel
+        agora = time.time()
+        dt = 0.0 if t["ultimo_ts"] is None else min(2.0, max(0.0, agora - t["ultimo_ts"]))
+        t["ultimo_ts"] = agora
+        t["amostras"] += 1
+
+        rpm = self.valores_atuais.get("RPM")
+        vel = self.valores_atuais.get("VEL")
+        ect = self.valores_atuais.get("ECT")
+        mp = self.valores_atuais.get("MAP")
+        tps = self.valores_atuais.get("TPS")
+        lam = self.valores_atuais.get("LAMBDA_1")
+        stft = self.valores_atuais.get("STFT")
+        ltft = self.valores_atuais.get("LTFT")
+        corr = self.valores_atuais.get("CORR_IGN")
+        iac = self.valores_atuais.get("IAC")
+        cl = self.valores_atuais.get("CLOSED_LOOP")
+
+        if isinstance(vel, (int, float)):
+            if vel > t["vel_max"]:
+                t["vel_max"] = vel
+            if vel >= 3:
+                t["amostras_mov"] += 1
+
+        if isinstance(rpm, (int, float)) and rpm > t["rpm_max"]:
+            t["rpm_max"] = rpm
+
+        # Arrefecimento
+        if isinstance(ect, (int, float)) and ect > -5:
+            if t["ect_ini"] is None:
+                t["ect_ini"] = ect
+            if t["ect_min"] is None or ect < t["ect_min"]:
+                t["ect_min"] = ect
+            if t["ect_max"] is None or ect > t["ect_max"]:
+                t["ect_max"] = ect
+            if ect >= 80.0 and t["tempo_para_80c"] is None and t["ect_ini"] < 72.0:
+                t["tempo_para_80c"] = round(agora - t["inicio_ts"], 0)
+            if ect >= 98.0:
+                t["tempo_acima_98c"] += dt
+
+        # Detonacao (Knock / Retirada de Avanco)
+        if isinstance(corr, (int, float)):
+            sob_carga = (isinstance(tps, (int, float)) and tps >= 12.0) or (isinstance(mp, (int, float)) and mp >= 52.0)
+            if corr <= -0.8 and sob_carga:
+                if not t["knock_ativo_frame"]:
+                    t["knock_eventos"] += 1
+                    t["knock_ativo_frame"] = True
+                if corr < t["knock_pior_graus"]:
+                    t["knock_pior_graus"] = corr
+                    t["knock_pior_rpm"] = int(rpm) if isinstance(rpm, (int, float)) else 0
+                    t["knock_pior_map"] = float(mp) if isinstance(mp, (int, float)) else 0.0
+            elif corr > -0.4:
+                t["knock_ativo_frame"] = False
+
+        # Sonda Lambda & Mistura em Malha Fechada Quente
+        quente = isinstance(ect, (int, float)) and ect >= 75.0
+        malha_fechada = (cl in (2.0, 16.0)) or (quente and isinstance(rpm, (int, float)) and rpm > 650)
+        if quente and malha_fechada:
+            t["tempo_cl_quente"] += dt
+            if isinstance(lam, (int, float)):
+                lado = "R" if lam >= 550 else ("P" if lam <= 350 else t["lambda_ultimo_lado"])
+                if lado and t["lambda_ultimo_lado"] and lado != t["lambda_ultimo_lado"]:
+                    t["lambda_trocas"] += 1
+                if lado:
+                    t["lambda_ultimo_lado"] = lado
+
+            if isinstance(stft, (int, float)):
+                t["stft_soma"] += stft
+                t["stft_n"] += 1
+                if t["stft_min"] is None or stft < t["stft_min"]:
+                    t["stft_min"] = stft
+                if t["stft_max"] is None or stft > t["stft_max"]:
+                    t["stft_max"] = stft
+
+        if isinstance(ltft, (int, float)):
+            t["ltft_ultimo"] = ltft
+
+        # Mistura pobre sob carga alta
+        if (
+            isinstance(mp, (int, float)) and mp >= 78.0
+            and isinstance(tps, (int, float)) and tps >= 45.0
+            and isinstance(lam, (int, float)) and lam < 480.0
+            and isinstance(rpm, (int, float)) and rpm >= 2200
+        ):
+            t["pobre_carga_eventos"] += 1
+
+        # Marcha lenta aquecida (Vacuo MAP + Passos IAC)
+        if (
+            isinstance(ect, (int, float)) and ect >= 80.0
+            and isinstance(vel, (int, float)) and vel == 0
+            and isinstance(tps, (int, float)) and tps <= 1.0
+            and isinstance(rpm, (int, float)) and 650 <= rpm <= 1050
+        ):
+            if isinstance(mp, (int, float)) and 15.0 <= mp <= 65.0:
+                t["map_lenta_soma"] += mp
+                t["map_lenta_n"] += 1
+            if isinstance(iac, (int, float)) and 5 <= iac <= 180:
+                t["iac_lenta_soma"] += iac
+                t["iac_lenta_n"] += 1
+
+        # Alertas criticos imediatos na barra superior
+        alerta = ""
+        if isinstance(ect, (int, float)) and ect >= 103.0:
+            alerta = f"ALERTA CRITICO: TEMPERATURA AGUA {ect:.0f} C!"
+        elif isinstance(corr, (int, float)) and corr <= -6.0:
+            alerta = f"ALERTA KNOCK SEVERO: RETIRADA DE {corr:.1f} GRAUS!"
+        t["alerta_critico_atual"] = alerta
+
+    def gerar_texto_boletim(self):
+        t = self.tel
+        dur_s = max(1, int(time.time() - t["inicio_ts"]))
+        mins, segs = divmod(dur_s, 60)
+
+        ev_k = t["knock_eventos"]
+        pior_k = t["knock_pior_graus"]
+        if ev_k == 0 or pior_k > -1.0:
+            sev_k = "NORMAL (Sem detonacao relevante)"
+        elif pior_k >= -3.0 and ev_k <= 6:
+            sev_k = "LEVE (Pontual em retomada - aceitavel)"
+        elif pior_k >= -5.5:
+            sev_k = "MODERADA (Atencao: octanagem combustivel / carbonizacao)"
+        else:
+            sev_k = "SEVERA (Risco mecanico - revisar combustivel/ignicao)"
+
+        det_k = (
+            f"  - Gravidade: {sev_k}\n"
+            f"  - Eventos sob carga: {ev_k} ocorrencia(s)\n"
+            f"  - Pico maximo retirado: {pior_k:.1f} graus"
+            + (f" (a {t['knock_pior_rpm']} rpm / {t['knock_pior_map']:.1f} kPa)" if ev_k > 0 else "")
+        )
+
+        ect_ini = f"{t['ect_ini']:.0f} C" if t["ect_ini"] is not None else "--"
+        ect_max = f"{t['ect_max']:.0f} C" if t["ect_max"] is not None else "--"
+        if t["ect_max"] is None:
+            diag_ect = "Aguardando amostras de temperatura"
+        elif t["ect_max"] >= 103.0:
+            diag_ect = "CRITICO: Superaquecimento detectado (>= 103 C)"
+        elif t["ect_max"] >= 98.0:
+            diag_ect = "ATENCAO: Temperatura elevada (98-102 C)"
+        elif dur_s >= 600 and t["amostras_mov"] > 30 and t["ect_max"] < 78.0:
+            diag_ect = "ATENCAO: Motor nao atingiu 78 C (valvula termostatica aberta?)"
+        else:
+            diag_ect = "NORMAL (Controle termico estavel)"
+
+        t80_txt = f"{int(t['tempo_para_80c'])}s" if t["tempo_para_80c"] is not None else "N/A"
+        det_ect = (
+            f"  - Estado: {diag_ect}\n"
+            f"  - Inicio: {ect_ini}  |  Pico Maximo: {ect_max}\n"
+            f"  - Tempo ate 80 C: {t80_txt}  |  Tempo >= 98 C: {t['tempo_acima_98c']:.0f}s"
+        )
+
+        taxa_sonda = (t["lambda_trocas"] / (t["tempo_cl_quente"] / 60.0)) if t["tempo_cl_quente"] >= 20.0 else None
+        if taxa_sonda is None:
+            diag_sonda = "Aguardando 20s+ em malha fechada quente (>= 75 C)"
+            taxa_txt = "--"
+        elif taxa_sonda >= 22.0:
+            diag_sonda = "NORMAL (Sonda pre-cat rapida e responsiva)"
+            taxa_txt = f"{taxa_sonda:.0f} trocas/min"
+        else:
+            diag_sonda = "ATENCAO: Sonda pre-cat lenta/envelhecida (< 22 trocas/min)"
+            taxa_txt = f"{taxa_sonda:.0f} trocas/min"
+
+        stft_med = f"{(t['stft_soma'] / t['stft_n']):+.1f}%" if t["stft_n"] > 0 else "--"
+        stft_faixa = f"{t['stft_min']:+.1f}% a {t['stft_max']:+.1f}%" if t["stft_n"] > 0 else "--"
+        ltft_txt = f"{t['ltft_ultimo']:+.1f}%" if t["ltft_ultimo"] is not None else "--"
+
+        det_mist = (
+            f"  - Sonda Pre-Cat: {diag_sonda} ({taxa_txt})\n"
+            f"  - STFT Medio: {stft_med} (Faixa: {stft_faixa})\n"
+            f"  - LTFT Atual: {ltft_txt}\n"
+            f"  - Alertas mistura pobre em carga alta: {t['pobre_carga_eventos']}"
+        )
+
+        if t["map_lenta_n"] >= 5:
+            map_med = t["map_lenta_soma"] / t["map_lenta_n"]
+            iac_med = (t["iac_lenta_soma"] / t["iac_lenta_n"]) if t["iac_lenta_n"] > 0 else 0
+            if map_med > 40.0:
+                diag_lenta = "ATENCAO: Vacuo fraco em lenta (> 40 kPa - possivel entrada falsa de ar)"
+            elif iac_med > 110:
+                diag_lenta = "ATENCAO: IAC muito aberto (> 110 passos - limpar TBI)"
+            else:
+                diag_lenta = "NORMAL (Vedacao admissao e marcha lenta saudaveis)"
+            det_lenta = (
+                f"  - Estado: {diag_lenta}\n"
+                f"  - Vacuo MAP medio em lenta quente: {map_med:.1f} kPa\n"
+                f"  - Abertura media atuador IAC: {iac_med:.0f} passos"
+            )
+        else:
+            det_lenta = "  - Aguardando marcha lenta estabilizada com motor >= 80 C."
+
+        return (
+            f"=== BOLETIM TECNICO DE TELEMETRIA - TR4 2.0 ===\n"
+            f"Duracao monitorada: {mins}m {segs}s  |  Amostras: {t['amostras']}\n"
+            f"RPM Max: {t['rpm_max']:.0f} rpm  |  Vel Max: {t['vel_max']:.0f} km/h\n\n"
+            f"1. DETONACAO / KNOCK (RETIRADA DE PONTO)\n{det_k}\n\n"
+            f"2. SISTEMA DE ARREFECIMENTO\n{det_ect}\n\n"
+            f"3. SONDA LAMBDA & CORRECAO DE MISTURA\n{det_mist}\n\n"
+            f"4. VACUO COLETOR & MARCHA LENTA (IAC)\n{det_lenta}"
+        )
+
+    def atualizar_tela_boletim(self):
+        if hasattr(self, "lbl_boletim"):
+            self.lbl_boletim.text = self.gerar_texto_boletim()
+
+    def salvar_boletim_txt(self, *args):
+        try:
+            pasta = self._obter_pasta_gravacao()
+            nome_arq = os.path.join(pasta, f"BOLETIM_TR4_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+            texto = self.gerar_texto_boletim()
+            with open(nome_arq, "w", encoding="utf-8") as f:
+                f.write(f"Gerado em: {datetime.now()}\n\n" + texto)
+            if hasattr(self, "lbl_boletim"):
+                self.lbl_boletim.text = f"BOLETIM SALVO EM:\n{nome_arq}\n\n" + texto
+        except Exception as e:
+            if hasattr(self, "lbl_boletim"):
+                self.lbl_boletim.text = f"Erro ao salvar boletim: {e}"
+
     # -------------------------------------------------------------------------
     # Persistencia do adaptador Bluetooth favorito & controle de estado da UI
     # -------------------------------------------------------------------------
@@ -100,11 +370,13 @@ class TR4EngineMixin:
                 sock.close()
             except Exception:
                 pass
+
     # -------------------------------------------------------------------------
     # Simulacao, permissoes e seletor Bluetooth (conecta direto ao escolher)
     # -------------------------------------------------------------------------
     def iniciar_simulacao(self, *args):
         self.desconectar_ecu()
+        self._init_telemetria_viagem()
         self.modo_simulacao = True
         self.rodando = True
         self._atualizar_estado_conexao("SIMULACAO")
@@ -151,7 +423,7 @@ class TR4EngineMixin:
                 self._atualizar_status(f"ERRO BT: {err[:42]}", (1.0, 0.35, 0.35, 1))
 
     def _abrir_seletor_bt(self, pareados):
-        box = BoxLayout(orientation="vertical", padding=10, spacing=10)
+        box = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(10))
         box.add_widget(
             Label(
                 text="Toque no scanner para conectar imediatamente:",
@@ -160,8 +432,8 @@ class TR4EngineMixin:
                 font_size="14sp",
             )
         )
-        scroll = ScrollView(size_hint_y=0.78)
-        lista = GridLayout(cols=1, spacing=12, size_hint_y=None, padding=(4, 6))
+        scroll = ScrollView(size_hint_y=0.78, bar_width=dp(6))
+        lista = GridLayout(cols=1, spacing=dp(12), size_hint_y=None, padding=(dp(4), dp(6)))
         lista.bind(minimum_height=lista.setter("height"))
         popup = Popup(title="Selecionar Scanner Bluetooth", content=box, size_hint=(0.95, 0.85))
         for dev in pareados:
@@ -173,7 +445,7 @@ class TR4EngineMixin:
             btn = Button(
                 text=rotulo,
                 size_hint_y=None,
-                height=68,
+                height=dp(64),
                 font_size="16sp",
                 bold=True,
                 background_normal="",
@@ -199,6 +471,7 @@ class TR4EngineMixin:
         popup.dismiss()
         self._salvar_bt_salvo(addr, nome)
         self._iniciar_conexao_completa(addr, nome)
+
     # -------------------------------------------------------------------------
     # Conexao unificada em 1 passo: Socket Bluetooth + Handshake KWP2000 ECU
     # -------------------------------------------------------------------------
@@ -207,6 +480,7 @@ class TR4EngineMixin:
         if self.rodando or self.modo_simulacao:
             self.desconectar_ecu()
         self.cancelar_conexao = False
+        self._bt_io_erro = False
         self._con_seq = getattr(self, "_con_seq", 0) + 1
         seq = self._con_seq
         self._atualizar_estado_conexao("CONECTANDO")
@@ -250,6 +524,7 @@ class TR4EngineMixin:
 
             self.bt_in = sock.getInputStream()
             self.bt_out = sock.getOutputStream()
+            self._bt_io_erro = False
 
             Clock.schedule_once(
                 lambda dt: self._atualizar_status(f"BT OK ({nome_dev}) | INICIANDO K-LINE ECU...", (1.0, 0.78, 0.2, 1))
@@ -303,6 +578,7 @@ class TR4EngineMixin:
                 )
                 return
 
+            self._init_telemetria_viagem()
             self.modo_simulacao = False
             self.rodando = True
             Clock.schedule_once(lambda dt: self._sucesso_conexao(nome_dev))
@@ -316,11 +592,12 @@ class TR4EngineMixin:
             Clock.schedule_once(
                 lambda dt, err=str(e): self._falha_conexao(f"FALHA CONEXAO: {err[:34]}", log_hs)
             )
+
     def _sucesso_conexao(self, nome_dev):
         self._atualizar_estado_conexao("CONECTADO")
         self._atualizar_status(f"ECU CONECTADA ({nome_dev}) | K-LINE ATIVO", (0.2, 0.95, 0.45, 1))
         if hasattr(self, "lbl_eng"):
-            self.lbl_eng.text = "ECU conectada com sucesso!\n\nPronta para leitura de falhas, info ou varredura."
+            self.lbl_eng.text = "ECU conectada com sucesso!\n\nPronta para leitura de falhas, info ou calibracao."
 
     def _falha_conexao(self, titulo, log_hs):
         self.rodando = False
@@ -330,6 +607,23 @@ class TR4EngineMixin:
         if hasattr(self, "lbl_eng") and log_hs:
             detalhes = "\n".join(log_hs[-6:])
             self.lbl_eng.text = f"{titulo}\n\n{detalhes}"
+
+    def _tratar_perda_conexao(self, motivo):
+        if getattr(self, "estado_conexao", "") == "DESCONECTADO":
+            return
+        self.rodando = False
+        self.varrendo = False
+        self.modo_simulacao = False
+        if getattr(self, "gravando_log", False):
+            self.parar_gravacao_log()
+        self._fechar_socket_bt()
+        self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
+        self.atualizar_interface(0)
+        self._atualizar_estado_conexao("DESCONECTADO")
+        self._atualizar_status(motivo, (1.0, 0.28, 0.28, 1))
+        if hasattr(self, "lbl_eng"):
+            self.lbl_eng.text = f"{motivo}\n\nLigue a chave do veiculo e toque em CONECTAR para reconectar."
+        self.atualizar_tela_boletim()
 
     def _atualizar_status(self, texto, cor):
         self.lbl_status.text = texto
@@ -344,6 +638,7 @@ class TR4EngineMixin:
 
     def enviar_comando_raw(self, cmd, timeout=1.5):
         if not self.bt_out or not self.bt_in:
+            self._bt_io_erro = True
             return ""
         lock = getattr(self, "bt_lock", None)
         if lock:
@@ -357,6 +652,9 @@ class TR4EngineMixin:
             while time.time() < t_limite:
                 if self.bt_in.available() > 0:
                     b = self.bt_in.read()
+                    if b < 0:
+                        self._bt_io_erro = True
+                        break
                     if b == 62:
                         break
                     resposta.append(b)
@@ -364,6 +662,7 @@ class TR4EngineMixin:
                     time.sleep(0.01)
             return resposta.decode("ascii", errors="ignore").replace("\r", " ").replace("\n", " ").strip()
         except Exception:
+            self._bt_io_erro = True
             return ""
         finally:
             if lock:
@@ -379,6 +678,8 @@ class TR4EngineMixin:
         return [int(dados_hex[i:i + 2], 16) for i in range(0, len(dados_hex) - 1, 2)]
 
     def _registrar_valor(self, pid_id, valor):
+        if valor is None:
+            return
         self.valores_atuais[pid_id] = valor
         if isinstance(valor, (int, float)):
             if pid_id not in self.valores_min or valor < self.valores_min[pid_id]:
@@ -397,33 +698,74 @@ class TR4EngineMixin:
 
     def loop_leitura(self):
         t0 = time.time()
+        ciclo = 0
+        ciclos_sem_resposta = 0
         while self.rodando:
+            ciclo += 1
             t_atual = time.time() - t0
             cache_comandos = {}
             gravando_ativo = self.gravando_log and not getattr(self, "log_pausado", False)
             log_ativos = getattr(self, "selecionados_log", {}) if gravando_ativo else {}
+            ler_bg_agora = (ciclo % 5 == 1)
+            comandos_tentados = 0
+            comandos_validos = 0
 
             for pid in PIDS_DB:
                 if not self.rodando:
                     break
-                ativo = self.selecionados.get(pid["id"], False) or log_ativos.get(pid["id"], False)
-                if not ativo:
+                pid_id = pid["id"]
+                ativo_ui = self.selecionados.get(pid_id, False) or log_ativos.get(pid_id, False)
+                ativo_bg = ler_bg_agora and (pid_id in PIDS_VIGILANCIA_BG)
+                if not (ativo_ui or ativo_bg):
                     continue
                 if self.modo_simulacao:
                     valor = pid["sim"](t_atual)
+                    comandos_validos += 1
                 else:
                     cmd = pid["cmd"]
                     if cmd not in cache_comandos:
-                        raw = self.enviar_comando_raw(cmd, timeout=1.2)
-                        cache_comandos[cmd] = self.parse_bytes_kwp(raw, cmd)
+                        comandos_tentados += 1
+                        raw = self.enviar_comando_raw(cmd, timeout=1.0)
+                        parsed = self.parse_bytes_kwp(raw, cmd)
+                        cache_comandos[cmd] = parsed
+                        if parsed:
+                            comandos_validos += 1
                     bytes_resp = cache_comandos[cmd]
                     if not bytes_resp:
                         continue
                     valor = pid["calc"](bytes_resp)
-                self._registrar_valor(pid["id"], valor)
+                self._registrar_valor(pid_id, valor)
 
             if not self.rodando:
                 break
+
+            # Deteccao automatica de perda de conexao / chave desligada
+            if not self.modo_simulacao:
+                if getattr(self, "_bt_io_erro", False):
+                    self.rodando = False
+                    Clock.schedule_once(lambda dt: self._tratar_perda_conexao("CONEXAO BLUETOOTH PERDIDA"))
+                    break
+
+                if comandos_tentados == 0:
+                    comandos_tentados = 1
+                    raw_hb = self.enviar_comando_raw("21A2", timeout=1.0)
+                    if self.parse_bytes_kwp(raw_hb, "21A2"):
+                        comandos_validos = 1
+
+                if comandos_validos == 0:
+                    ciclos_sem_resposta += 1
+                    if ciclos_sem_resposta >= 3:
+                        self.rodando = False
+                        Clock.schedule_once(
+                            lambda dt: self._tratar_perda_conexao("ECU DESCONECTADA (CHAVE DESLIGADA / SEM RESPOSTA)")
+                        )
+                        break
+                    time.sleep(0.25)
+                    continue
+                else:
+                    ciclos_sem_resposta = 0
+
+            self._processar_amostra_telemetria()
 
             if gravando_ativo and self.writer_log and hasattr(self, "pids_gravando_lista"):
                 try:
@@ -437,19 +779,26 @@ class TR4EngineMixin:
                     pass
             Clock.schedule_once(self.atualizar_interface)
             time.sleep(0.12 if self.modo_simulacao else 0.04)
+
     def atualizar_interface(self, dt):
         for pid_id, widgets in self.cards_ui.items():
-            lbl_val, lbl_mm, unidade = widgets
+            lbl_val, lbl_min, lbl_max, unidade = widgets
             val = self.valores_atuais.get(pid_id, "--")
             lbl_val.text = f"{val} {unidade}" if val != "--" else "--"
             vmin = self.valores_min.get(pid_id, "--")
             vmax = self.valores_max.get(pid_id, "--")
-            lbl_mm.text = f"MIN: {vmin}   |   MAX: {vmax}"
+            lbl_min.text = f"MIN: {vmin}"
+            lbl_max.text = f"MAX: {vmax}"
+
         if hasattr(self, "graficos_lista") and hasattr(self, "pids_graf"):
             for idx, graf in enumerate(self.graficos_lista):
                 val = self.valores_atuais.get(self.pids_graf[idx])
                 if isinstance(val, (int, float)):
                     graf.adicionar_ponto(val)
+
+        alerta = self.tel.get("alerta_critico_atual", "")
+        if alerta and self.estado_conexao in ("CONECTADO", "SIMULACAO"):
+            self._atualizar_status(alerta, (1.0, 0.25, 0.25, 1))
 
     def _obter_pasta_gravacao(self):
         pasta_dl = "/sdcard/Download"
@@ -519,6 +868,60 @@ class TR4EngineMixin:
         if hasattr(self, "lbl_log_info") and arq:
             self.lbl_log_info.text = f"LOG ENCERRADO E SALVO ({qtd} linhas):\n{arq}"
 
+    # -------------------------------------------------------------------------
+    # Captura de Calibracao Hex Bruto (3 amostras rapidas dos blocos vivos)
+    # -------------------------------------------------------------------------
+    def capturar_calibracao_ecu(self, *args):
+        if self.modo_simulacao:
+            self.lbl_eng.text = "Modo Simulacao ativo: conecte no carro para capturar bytes reais."
+            return
+        if not self.rodando or not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
+            return
+        self.rodando = False
+        self.lbl_eng.text = "Capturando 3 amostras hexadecimais para calibracao (~2s)..."
+        threading.Thread(target=self._capturar_calibracao_thread, daemon=True).start()
+
+    def _capturar_calibracao_thread(self):
+        time.sleep(0.25)
+        cmds_vivos = [
+            "213A", "213B", "2145", "2147", "2157", "2159",
+            "2160", "2161", "2162", "2163", "2164", "2165",
+            "2166", "2167", "2168", "2169", "216A", "216B",
+            "2178", "2179",
+            "21A0", "21A1", "21A2", "21A3", "21A4", "21A5", "21A6", "21A7",
+        ]
+        linhas = [
+            f"CAPTURA DE CALIBRACAO - ECU IAW 4AM ({datetime.now()})",
+            "Anote junto os valores do scanner de referencia (Bateria, Sonda 2, etc.)",
+            "=" * 60,
+        ]
+        for amostra in range(1, 4):
+            linhas.append(f"\n--- AMOSTRA {amostra} ({datetime.now().strftime('%H:%M:%S')}) ---")
+            for cmd in cmds_vivos:
+                resp = self.enviar_comando_raw(cmd, timeout=0.9)
+                b_list = self.parse_bytes_kwp(resp, cmd)
+                hex_fmt = " ".join(f"{x:02X}" for x in b_list) if b_list else f"RAW: {resp}"
+                linhas.append(f"{cmd} -> {hex_fmt}")
+            time.sleep(0.2)
+
+        pasta = self._obter_pasta_gravacao()
+        nome_arq = os.path.join(pasta, f"CALIBRACAO_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+        try:
+            with open(nome_arq, "w", encoding="utf-8") as f:
+                f.write("\n".join(linhas))
+            msg = f"Captura de calibracao concluida!\n\nSalva em:\n{nome_arq}"
+        except Exception as e:
+            msg = f"Erro ao salvar calibracao: {e}"
+
+        Clock.schedule_once(lambda dt, m=msg: setattr(self.lbl_eng, "text", m))
+        if self.estado_conexao == "CONECTADO" and self.bt_socket:
+            self.rodando = True
+            self.loop_leitura()
+
+    # -------------------------------------------------------------------------
+    # Info ECU, DTCs, Busca de Modulos e Varredura
+    # -------------------------------------------------------------------------
     def ler_info_ecu(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = (
@@ -592,6 +995,7 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
+
     def ler_dtcs(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = "Nenhuma falha armazenada na ECU."
