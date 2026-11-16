@@ -21,6 +21,31 @@ PIDS_VIGILANCIA_BG = {
     "STFT", "LTFT", "CORR_IGN", "IAC", "RPM_ALVO", "CLOSED_LOOP",
 }
 
+CMDS_MODO_01_PROBE = [
+    ("0103", "Status Loop OBD2"),
+    ("0104", "Carga Calculada"),
+    ("0105", "Temp Agua OBD2"),
+    ("0106", "STFT Banco 1 OBD2"),
+    ("0107", "LTFT Banco 1 OBD2"),
+    ("010B", "MAP OBD2"),
+    ("010C", "RPM OBD2"),
+    ("010D", "Velocidade OBD2"),
+    ("010E", "Avanco Ignicao OBD2"),
+    ("010F", "Temp Ar OBD2"),
+    ("0111", "TPS OBD2"),
+    ("0114", "Sonda Pre-Cat OBD2"),
+    ("0142", "Tensao Bateria OBD2"),
+    ("0152", "Percentual Etanol OBD2"),
+]
+
+CMDS_MODO_21_VIVOS = [
+    "213A", "213B", "2145", "2147", "2157", "2159",
+    "2160", "2161", "2162", "2163", "2164", "2165",
+    "2166", "2167", "2168", "2169", "216A", "216B",
+    "2178", "2179",
+    "21A0", "21A1", "21A2", "21A3", "21A4", "21A5", "21A6", "21A7",
+]
+
 
 class TR4EngineMixin:
     # -------------------------------------------------------------------------
@@ -66,7 +91,7 @@ class TR4EngineMixin:
             self.lbl_boletim.text = (
                 "Nova viagem iniciada! Telemetria zerada.\n\n"
                 "Pode rodar normalmente; o sistema esta vigiando temperatura, detonacao (knock), "
-                "sonda lambda, correcoes de mistura e marcha lenta em segundo plano."
+                "sonda lambda pre-cat, correcoes de mistura e marcha lenta em segundo plano."
             )
 
     def _processar_amostra_telemetria(self):
@@ -124,7 +149,7 @@ class TR4EngineMixin:
             elif corr > -0.4:
                 t["knock_ativo_frame"] = False
 
-        # Sonda Lambda & Mistura em Malha Fechada Quente
+        # Sonda Lambda Pre-Cat & Mistura em Malha Fechada Quente
         quente = isinstance(ect, (int, float)) and ect >= 75.0
         malha_fechada = (cl in (2.0, 16.0)) or (quente and isinstance(rpm, (int, float)) and rpm > 650)
         if quente and malha_fechada:
@@ -266,7 +291,7 @@ class TR4EngineMixin:
             f"RPM Max: {t['rpm_max']:.0f} rpm  |  Vel Max: {t['vel_max']:.0f} km/h\n\n"
             f"1. DETONACAO / KNOCK (RETIRADA DE PONTO)\n{det_k}\n\n"
             f"2. SISTEMA DE ARREFECIMENTO\n{det_ect}\n\n"
-            f"3. SONDA LAMBDA & CORRECAO DE MISTURA\n{det_mist}\n\n"
+            f"3. SONDA LAMBDA PRE-CAT & MISTURA\n{det_mist}\n\n"
             f"4. VACUO COLETOR & MARCHA LENTA (IAC)\n{det_lenta}"
         )
 
@@ -579,6 +604,8 @@ class TR4EngineMixin:
                 return
 
             self._init_telemetria_viagem()
+            self._calib_arquivo_atual = ""
+            self._calib_etapas_feitas = []
             self.modo_simulacao = False
             self.rodando = True
             Clock.schedule_once(lambda dt: self._sucesso_conexao(nome_dev))
@@ -597,7 +624,14 @@ class TR4EngineMixin:
         self._atualizar_estado_conexao("CONECTADO")
         self._atualizar_status(f"ECU CONECTADA ({nome_dev}) | K-LINE ATIVO", (0.2, 0.95, 0.45, 1))
         if hasattr(self, "lbl_eng"):
-            self.lbl_eng.text = "ECU conectada com sucesso!\n\nPronta para leitura de falhas, info ou calibracao."
+            self.lbl_eng.text = (
+                "ECU conectada com sucesso!\n\n"
+                "Para calibrar 100% dos PIDs, use CAPTURAR CALIBRACAO nos 4 estados:\n"
+                "1) Chave ligada, motor frio desligado\n"
+                "2) Marcha lenta quente (80-94 C)\n"
+                "3) Ventoinha armada (~97 C)\n"
+                "4) Cut-off (>2200 RPM, pe fora do pedal)"
+            )
 
     def _falha_conexao(self, titulo, log_hs):
         self.rodando = False
@@ -670,7 +704,12 @@ class TR4EngineMixin:
 
     def parse_bytes_kwp(self, resp_str, cmd_enviado):
         limpo = "".join(c for c in resp_str.upper() if c in "0123456789ABCDEF")
-        prefixo_ok = "61" + cmd_enviado[2:4].upper()
+        try:
+            srv_req = int(cmd_enviado[:2], 16)
+            srv_ok = f"{(srv_req + 0x40):02X}"
+        except Exception:
+            srv_ok = "61"
+        prefixo_ok = srv_ok + cmd_enviado[2:4].upper()
         idx = limpo.find(prefixo_ok)
         if idx == -1:
             return []
@@ -869,8 +908,32 @@ class TR4EngineMixin:
             self.lbl_log_info.text = f"LOG ENCERRADO E SALVO ({qtd} linhas):\n{arq}"
 
     # -------------------------------------------------------------------------
-    # Captura de Calibracao Hex Bruto (3 amostras rapidas dos blocos vivos)
+    # Captura Guiada de Calibracao (Modo 01 Padrao + 4 Estados Modo 21)
     # -------------------------------------------------------------------------
+    def _classificar_estado_calibracao(self, b_a2, b_a6):
+        rpm = ((b_a2[0] << 8) | b_a2[1]) if len(b_a2) >= 2 else 0
+        ect = (((b_a2[6] << 8) | b_a2[7]) - 40) if len(b_a2) >= 8 else 0
+        tps_raw = ((b_a2[8] << 8) | b_a2[9]) if len(b_a2) >= 10 else 0
+        tps = max(0.0, ((tps_raw - 1.0) / 835.0) * 100.0)
+        vel = ((b_a6[2] << 8) | b_a6[3]) if len(b_a6) >= 4 else 0
+
+        if rpm == 0:
+            cod = "E1_CHAVE_LIGADA_MOTOR_PARADO"
+            desc = f"ESTADO 1: Chave ligada / Motor parado (ECT={ect}C)"
+        elif vel >= 10 and tps <= 1.5 and rpm >= 1800:
+            cod = "E4_CUTOFF_DESACELERACAO"
+            desc = f"ESTADO 4: Cut-off em desaceleracao (RPM={rpm}, VEL={vel}km/h, TPS={tps:.1f}%)"
+        elif ect >= 95:
+            cod = "E3_VENTOINHA_ALTA_TEMP"
+            desc = f"ESTADO 3: Motor quente / Ventoinha (~{ect}C, RPM={rpm})"
+        elif ect >= 78 and vel == 0 and tps <= 1.5:
+            cod = "E2_LENTA_AQUECIDA"
+            desc = f"ESTADO 2: Marcha lenta aquecida (ECT={ect}C, RPM={rpm})"
+        else:
+            cod = f"EXTRA_RPM{rpm}_ECT{ect}"
+            desc = f"ESTADO EXTRA: RPM={rpm}, ECT={ect}C, VEL={vel}km/h, TPS={tps:.1f}%"
+        return cod, desc
+
     def capturar_calibracao_ecu(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = "Modo Simulacao ativo: conecte no carro para capturar bytes reais."
@@ -879,38 +942,78 @@ class TR4EngineMixin:
             self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
             return
         self.rodando = False
-        self.lbl_eng.text = "Capturando 3 amostras hexadecimais para calibracao (~2s)..."
+        self.lbl_eng.text = "Capturando Modo 01 + 3 amostras dos blocos Modo 21 (~3s)..."
         threading.Thread(target=self._capturar_calibracao_thread, daemon=True).start()
 
     def _capturar_calibracao_thread(self):
         time.sleep(0.25)
-        cmds_vivos = [
-            "213A", "213B", "2145", "2147", "2157", "2159",
-            "2160", "2161", "2162", "2163", "2164", "2165",
-            "2166", "2167", "2168", "2169", "216A", "216B",
-            "2178", "2179",
-            "21A0", "21A1", "21A2", "21A3", "21A4", "21A5", "21A6", "21A7",
-        ]
-        linhas = [
-            f"CAPTURA DE CALIBRACAO - ECU IAW 4AM ({datetime.now()})",
-            "Anote junto os valores do scanner de referencia (Bateria, Sonda 2, etc.)",
-            "=" * 60,
-        ]
+        b_a2 = self.parse_bytes_kwp(self.enviar_comando_raw("21A2", timeout=0.9), "21A2")
+        b_a6 = self.parse_bytes_kwp(self.enviar_comando_raw("21A6", timeout=0.9), "21A6")
+        cod_est, desc_est = self._classificar_estado_calibracao(b_a2, b_a6)
+
+        pasta = self._obter_pasta_gravacao()
+        arq_atual = getattr(self, "_calib_arquivo_atual", "")
+        if not arq_atual:
+            arq_atual = os.path.join(pasta, f"CALIBRACAO_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+            self._calib_arquivo_atual = arq_atual
+            self._calib_etapas_feitas = []
+
+        novo_arquivo = not os.path.exists(arq_atual)
+        linhas = []
+        if novo_arquivo:
+            linhas.extend([
+                f"CALIBRACAO ESTRUTURADA (4 ESTADOS + MODO 01) - ECU IAW 4AM ({datetime.now()})",
+                "Configuracao veiculo: Pajero TR4 2.0 16V Flex (Sonda unica pre-catalisador)",
+                "=" * 68,
+            ])
+
+        linhas.append(f"\n==================== {desc_est} [{datetime.now().strftime('%H:%M:%S')}] ====================")
+
+        # 1. Sondagem Modo 01 padrao OBD2 (entrega formulas ISO/SAE oficiais se suportado)
+        m01_ativos = []
+        for cmd01, nome01 in CMDS_MODO_01_PROBE:
+            resp01 = self.enviar_comando_raw(cmd01, timeout=0.7)
+            b01 = self.parse_bytes_kwp(resp01, cmd01)
+            if b01:
+                hex01 = " ".join(f"{x:02X}" for x in b01)
+                m01_ativos.append(f"  {cmd01} ({nome01}) -> {hex01}")
+        if m01_ativos:
+            linhas.append("[MODO 01 OBD2 ATIVOS]")
+            linhas.extend(m01_ativos)
+        else:
+            linhas.append("[MODO 01 OBD2] Nenhum PID respondeu sob cabecalho KWP 8110F1")
+
+        # 2. Tres amostras consecutivas de todos os blocos vivos Modo 21
         for amostra in range(1, 4):
-            linhas.append(f"\n--- AMOSTRA {amostra} ({datetime.now().strftime('%H:%M:%S')}) ---")
-            for cmd in cmds_vivos:
-                resp = self.enviar_comando_raw(cmd, timeout=0.9)
+            linhas.append(f"\n--- AMOSTRA {amostra}/3 ({datetime.now().strftime('%H:%M:%S')}) ---")
+            for cmd in CMDS_MODO_21_VIVOS:
+                resp = self.enviar_comando_raw(cmd, timeout=0.8)
                 b_list = self.parse_bytes_kwp(resp, cmd)
                 hex_fmt = " ".join(f"{x:02X}" for x in b_list) if b_list else f"RAW: {resp}"
                 linhas.append(f"{cmd} -> {hex_fmt}")
-            time.sleep(0.2)
+            time.sleep(0.15)
 
-        pasta = self._obter_pasta_gravacao()
-        nome_arq = os.path.join(pasta, f"CALIBRACAO_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+        if cod_est not in self._calib_etapas_feitas:
+            self._calib_etapas_feitas.append(cod_est)
+
+        e1 = "OK" if "E1_CHAVE_LIGADA_MOTOR_PARADO" in self._calib_etapas_feitas else "PENDENTE"
+        e2 = "OK" if "E2_LENTA_AQUECIDA" in self._calib_etapas_feitas else "PENDENTE"
+        e3 = "OK" if "E3_VENTOINHA_ALTA_TEMP" in self._calib_etapas_feitas else "PENDENTE"
+        e4 = "OK" if "E4_CUTOFF_DESACELERACAO" in self._calib_etapas_feitas else "PENDENTE"
+
         try:
-            with open(nome_arq, "w", encoding="utf-8") as f:
-                f.write("\n".join(linhas))
-            msg = f"Captura de calibracao concluida!\n\nSalva em:\n{nome_arq}"
+            with open(arq_atual, "a", encoding="utf-8") as f:
+                f.write("\n".join(linhas) + "\n")
+            msg = (
+                f"Capturado: {desc_est}\n"
+                f"PIDs Modo 01 ativos: {len(m01_ativos)}\n\n"
+                f"Progresso dos 4 Estados:\n"
+                f"[{e1}] 1. Chave ligada / Motor parado\n"
+                f"[{e2}] 2. Marcha lenta quente (80-94 C)\n"
+                f"[{e3}] 3. Ventoinha ligada (~97 C)\n"
+                f"[{e4}] 4. Cut-off (>2200 RPM, TPS 0%)\n\n"
+                f"Arquivo unico:\n{arq_atual}"
+            )
         except Exception as e:
             msg = f"Erro ao salvar calibracao: {e}"
 
