@@ -233,4 +233,107 @@ PIDS_DB = [
         "unidade": "rpm",
         "cmd": "213A",
         "rapido": False,
-        "conf": "
+        "conf": "ok",
+        "min": 600,
+        "max": 1200,
+        "calc": lambda b: _num(_u16(b, 0), 1, 0),
+        "sim": lambda t: 750.0,
+    },
+    {
+        "id": "TENSAO_KNOCK",
+        "nome": "Sensor Detonacao (Knock)",
+        "unidade": "V",
+        "cmd": "2142",
+        "rapido": False,
+        "conf": "est",
+        "min": 0.0,
+        "max": 5.0,
+        "calc": lambda b: _num(_u16(b, 0), 5.0 / 1023.0, 2),
+        "sim": lambda t: round(0.35 + 0.12 * abs(math.sin(t * 2.1)), 2),
+    },
+    {
+        "id": "REL_AF",
+        "nome": "Relacao Ar/Combustivel",
+        "unidade": "A/F",
+        "cmd": "2148",
+        "rapido": False,
+        "conf": "est",
+        "min": 8.5,
+        "max": 16.0,
+        "calc": lambda b: _num(_u16(b, 0), 0.01, 2),
+        "sim": lambda t: 13.2,
+    },
+    {
+        "id": "PURGA_CANISTER",
+        "nome": "Valvula Canister (EVAP)",
+        "unidade": "%",
+        "cmd": "213E",
+        "rapido": False,
+        "conf": "est",
+        "min": 0,
+        "max": 100,
+        "calc": lambda b: _num(_u8(b, 0), 100.0 / 255.0, 1),
+        "sim": lambda t: round(max(0.0, 25.0 * math.sin(t * 0.4)), 1),
+    },
+    {
+        "id": "ESTADO_MOTOR",
+        "nome": "Estado do Motor",
+        "unidade": "",
+        "cmd": "21A6",
+        "rapido": False,
+        "conf": "ok",
+        "min": 0,
+        "max": 1,
+        "calc": lambda b: (
+            "PARADO" if _u8(b, 4) == 2
+            else ("RODANDO" if _u8(b, 4) == 4
+                  else (f"ST:{_u8(b, 4)}" if _u8(b, 4) is not None else "--"))
+        ),
+        "sim": lambda t: "RODANDO",
+    },
+    {
+        "id": "STATUS_FAN",
+        "nome": "Eletroventilador (Ventoinha)",
+        "unidade": "",
+        "cmd": "21A6",
+        "rapido": False,
+        "conf": "ok",
+        "min": 0,
+        "max": 1,
+        "calc": lambda b: (
+            "LIGADA" if (_u8(b, 8) or 0) & 0x08
+            else ("DESLIGADA" if _u8(b, 8) is not None else "--")
+        ),
+        "sim": lambda t: "LIGADA" if math.sin(t * 0.25) > 0.6 else "DESLIGADA",
+    },
+    {
+        "id": "STATUS_AC",
+        "nome": "Ar-Condicionado (A/C)",
+        "unidade": "",
+        "cmd": "21A6",
+        "rapido": False,
+        "conf": "ok",
+        "min": 0,
+        "max": 1,
+        "calc": lambda b: (
+            "LIGADO" if (_u8(b, 6) or 0) & 0x40
+            else ("DESLIGADO" if _u8(b, 6) is not None else "--")
+        ),
+        "sim": lambda t: "DESLIGADO",
+    },
+    {
+        "id": "RODA_FONICA",
+        "nome": "Aprendizado Roda Fonica",
+        "unidade": "",
+        "cmd": "21A6",
+        "rapido": False,
+        "conf": "ok",
+        "min": 0,
+        "max": 1,
+        "calc": lambda b: (
+            "APRENDIDA" if (_u8(b, 10) or 0) > 0
+            else ("PENDENTE" if _u8(b, 10) is not None else "--")
+        ),
+        "sim": lambda t: "APRENDIDA",
+    },
+]
