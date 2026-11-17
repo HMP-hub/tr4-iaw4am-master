@@ -1,9 +1,5 @@
 # coding: utf-8
-# Mapa de leitura da ECU Magneti Marelli IAW 4AM (Pajero TR4 flex), KWP2000 modo 21.
-#
-# "b" e a lista de bytes DEPOIS do cabecalho "61 xx".
-# Na convencao OBDLink/Torque: A = b[0], B = b[1].
-# Valores de 16 bits sao big-endian.
+# Mapa calibrado da ECU Magneti Marelli IAW 4AM (Pajero TR4 2.0 16V Flex) - KWP2000 Modo 21.
 import math
 
 
@@ -34,31 +30,41 @@ def _calc_tps(b):
     v = _u16(b, 8)
     if v is None:
         return 0.0
-    # Calibrado no pedal: 1 = 0% (solto), 436 = 52.1% (meio), 836 = 100% (batente)
     pct = ((v - 1.0) / 835.0) * 100.0
     return round(max(0.0, min(100.0, pct)), 1)
 
 
-def _calc_trim_156(b):
+def _calc_stft(b):
+    # 2147: 0x9C40 (40000) e o ponto neutro exato (0.0% em repouso e cut-off)
+    v = _u16(b, 0)
+    if v is None:
+        return 0.0
+    return round(((v - 40000.0) / 40000.0) * 100.0, 1)
+
+
+def _calc_ltft(b):
+    # 2179: centro em 156 (0x9C)
     a = _u8(b, 0)
     if a is None:
-        return None
+        return 0.0
     return round(((a - 156.0) / 156.0) * 100.0, 1)
 
 
 def _calc_etanol(b):
-    b1 = _u8(b, 1)
-    if b1 is None:
+    # 217B -> 00 84 (byte B = 132 = E27)
+    val_b = _u8(b, 1)
+    if val_b is None:
         return None
-    val = 27.0 + ((132.0 - b1) * 1.736)
-    return round(max(0.0, min(100.0, val)), 1)
+    etanol = 27.0 + ((132.0 - float(val_b)) * 1.736)
+    return round(max(0.0, min(100.0, etanol)), 1)
 
 
 def _calc_afr(b):
-    b1 = _u8(b, 1)
-    if b1 is None:
+    # 217B -> 00 84 (byte B = 132 -> 13.2 AFR)
+    val_b = _u8(b, 1)
+    if val_b is None:
         return None
-    return round(b1 / 10.0, 1)
+    return round(float(val_b) / 10.0, 1)
 
 
 def _calc_temp(b, idx):
@@ -68,53 +74,25 @@ def _calc_temp(b, idx):
     return round(float(v - 40), 0)
 
 
-def _calc_avanco(b):
-    v = _s16(b, 18)
-    if v is None:
-        return None
-    deg = round(v * 0.1, 1)
-    if deg < -15.0 or deg > 55.0:
-        return None
-    return deg
-
-
-def _calc_knock_sensor_v(b):
-    # Sinal do sensor piezo de detonacao (0..5.00 V)
-    # < 1.50 V = ruido mecanico normal | 1.50-2.50 V = atencao | > 2.50 V = knock
-    if len(b) >= 2:
-        raw16 = _u16(b, 0)
-        if raw16 is not None and raw16 <= 1023:
-            return round((raw16 / 1023.0) * 5.0, 2)
-    a = _u8(b, 0)
-    if a is None:
-        return None
-    return round((a / 255.0) * 5.0, 2)
-
-
-def _calc_corr_ign(b):
-    # Atraso/retirada de avanco aplicada pela ECU ao detectar detonacao (graus)
-    v = _s16(b, 0)
-    if v is None:
-        return None
-    deg = round(v * 0.1, 1)
-    if deg < -25.0 or deg > 25.0:
-        return None
-    return deg
+def _fmt_marcha(v):
+    m = int(round(float(v)))
+    if m <= 0:
+        return "Neutro"
+    return f"{m}ª Marcha"
 
 
 PIDS_DB = [
-    # --- Principais (rapido=True: marcados por padrao no Painel e Log) ------------------------------------------
+    # --- Principais (rapido=True: marcados por padrao no Painel e Log) ---
     {
         "id": "RPM",
         "nome": "Rotacao Motor (RPM)",
         "unidade": "rpm",
         "cmd": "21A2",
         "rapido": True,
-        "conf": "ok",
         "min": 0,
         "max": 7000,
         "calc": lambda b: _num(_u16(b, 0), 1, 0),
-        "sim": lambda t: round(820 + 25 * math.sin(t * 2.0), 0),
+        "sim": lambda t: round(800 + 25 * math.sin(t * 2.0), 0),
     },
     {
         "id": "VEL",
@@ -122,7 +100,6 @@ PIDS_DB = [
         "unidade": "km/h",
         "cmd": "21A6",
         "rapido": True,
-        "conf": "ok",
         "min": 0,
         "max": 200,
         "calc": lambda b: _num(_u16(b, 2), 1, 0),
@@ -134,11 +111,10 @@ PIDS_DB = [
         "unidade": "kPa",
         "cmd": "21A2",
         "rapido": True,
-        "conf": "ok",
         "min": 10,
         "max": 105,
         "calc": lambda b: _num(_u16(b, 2), 0.1, 1),
-        "sim": lambda t: round(32.5 + 1.5 * math.sin(t * 2.0), 1),
+        "sim": lambda t: round(31.5 + 1.5 * math.sin(t * 2.0), 1),
     },
     {
         "id": "ECT",
@@ -146,7 +122,6 @@ PIDS_DB = [
         "unidade": "C",
         "cmd": "21A2",
         "rapido": True,
-        "conf": "ok",
         "min": -10,
         "max": 125,
         "calc": lambda b: _calc_temp(b, 6),
@@ -154,11 +129,10 @@ PIDS_DB = [
     },
     {
         "id": "TPS",
-        "nome": "Posicao Borboleta (TPS)",
+        "nome": "Posicao Borboleta",
         "unidade": "%",
         "cmd": "21A2",
         "rapido": True,
-        "conf": "ok",
         "min": 0,
         "max": 100,
         "calc": _calc_tps,
@@ -170,7 +144,6 @@ PIDS_DB = [
         "unidade": "mV",
         "cmd": "2145",
         "rapido": True,
-        "conf": "ok",
         "min": 0,
         "max": 1000,
         "calc": lambda b: _num(_u16(b, 0), 1, 0),
@@ -182,11 +155,10 @@ PIDS_DB = [
         "unidade": "%",
         "cmd": "2147",
         "rapido": True,
-        "conf": "ok",
         "min": -35,
         "max": 35,
-        "calc": _calc_trim_156,
-        "sim": lambda t: round(3.8 * math.sin(t * 1.4), 1),
+        "calc": _calc_stft,
+        "sim": lambda t: round(4.5 * math.sin(t * 1.4), 1),
     },
     {
         "id": "TI_EFETIVO",
@@ -194,11 +166,10 @@ PIDS_DB = [
         "unidade": "ms",
         "cmd": "21A0",
         "rapido": True,
-        "conf": "ok",
         "min": 0,
         "max": 25,
         "calc": lambda b: _num(_u16(b, 16), 0.002, 2),
-        "sim": lambda t: round(2.75 + 0.15 * math.sin(t * 2.2), 2),
+        "sim": lambda t: round(2.55 + 0.15 * math.sin(t * 2.2), 2),
     },
     {
         "id": "AVANCO",
@@ -206,57 +177,63 @@ PIDS_DB = [
         "unidade": "graus",
         "cmd": "21A0",
         "rapido": True,
-        "conf": "ok",
         "min": -15,
         "max": 55,
-        "calc": _calc_avanco,
-        "sim": lambda t: round(11.5 + 1.5 * math.sin(t * 1.8), 1),
+        "calc": lambda b: _num(_s16(b, 18), 0.1, 1),
+        "sim": lambda t: round(10.5 + 1.5 * math.sin(t * 1.8), 1),
     },
-
-    # --- Complementares (selecionaveis em PIDS / GRAFICO / LOG CSV) ----------------------------------------------
     {
         "id": "KNOCK_SENSOR",
         "nome": "Sensor Knock (<1.5V OK | >2.5V Knock)",
         "unidade": "V",
-        "cmd": "2168",
-        "rapido": False,
-        "conf": "provavel",
+        "cmd": "21A4",
+        "rapido": True,
         "min": 0.0,
         "max": 5.0,
-        "calc": _calc_knock_sensor_v,
-        "sim": lambda t: round(2.85 if math.sin(t * 0.9) > 0.92 else 0.65 + 0.15 * abs(math.sin(t * 2.5)), 2),
+        "calc": lambda b: _num(_u16(b, 8), 0.0000488, 2),
+        "sim": lambda t: round(1.15 + 0.25 * abs(math.sin(t * 1.7)), 2),
     },
     {
         "id": "CORR_IGN",
         "nome": "Atraso Ponto por Knock",
         "unidade": "graus",
         "cmd": "216A",
-        "rapido": False,
-        "conf": "provavel",
-        "min": -20,
+        "rapido": True,
+        "min": -15,
         "max": 15,
-        "calc": _calc_corr_ign,
-        "sim": lambda t: -2.0 if math.sin(t * 0.9) > 0.92 else 0.0,
+        "calc": lambda b: _num(_s16(b, 0), 0.1, 1),
+        "sim": lambda t: 0.0,
     },
     {
         "id": "LTFT",
         "nome": "Adaptativo Mistura (LTFT)",
         "unidade": "%",
         "cmd": "2179",
-        "rapido": False,
-        "conf": "ok",
-        "min": -35,
-        "max": 35,
-        "calc": _calc_trim_156,
+        "rapido": True,
+        "min": -30,
+        "max": 30,
+        "calc": _calc_ltft,
         "sim": lambda t: 3.8,
+    },
+
+    # --- Complementares confirmados (selecionaveis em PIDS / LOG CSV) ---
+    {
+        "id": "BATERIA",
+        "nome": "Tensao Bateria",
+        "unidade": "V",
+        "cmd": "21A2",
+        "rapido": False,
+        "min": 9.0,
+        "max": 16.0,
+        "calc": lambda b: _num(_u16(b, 16), 0.1, 1),
+        "sim": lambda t: 14.1,
     },
     {
         "id": "ETANOL_REAL",
         "nome": "Etanol Aprendido (Flex)",
         "unidade": "%",
-        "cmd": "2178",
+        "cmd": "217B",
         "rapido": False,
-        "conf": "ok",
         "min": 0,
         "max": 100,
         "calc": _calc_etanol,
@@ -265,26 +242,25 @@ PIDS_DB = [
     {
         "id": "AFR_LAMBDA",
         "nome": "Relacao Ar/Combustivel (AFR)",
-        "unidade": ":1",
-        "cmd": "2178",
+        "unidade": "AFR",
+        "cmd": "217B",
         "rapido": False,
-        "conf": "ok",
-        "min": 8,
-        "max": 16,
+        "min": 7.0,
+        "max": 18.0,
         "calc": _calc_afr,
         "sim": lambda t: 13.2,
     },
     {
-        "id": "CLOSED_LOOP",
-        "nome": "Status da Malha (Loop)",
-        "unidade": "Code",
-        "cmd": "2157",
+        "id": "MARCHA_IND",
+        "nome": "Marcha Sugerida",
+        "unidade": "",
+        "cmd": "2161",
         "rapido": False,
-        "conf": "ok",
         "min": 0,
-        "max": 16,
-        "calc": lambda b: float(_u8(b, 0)) if _u8(b, 0) is not None else None,
-        "sim": lambda t: 2.0,
+        "max": 5,
+        "calc": lambda b: _num(_u16(b, 0), 1, 0),
+        "fmt": _fmt_marcha,
+        "sim": lambda t: 4.0,
     },
     {
         "id": "IAT",
@@ -292,11 +268,10 @@ PIDS_DB = [
         "unidade": "C",
         "cmd": "21A2",
         "rapido": False,
-        "conf": "ok",
         "min": -10,
         "max": 100,
         "calc": lambda b: _calc_temp(b, 4),
-        "sim": lambda t: round(36.0 + 1.5 * math.sin(t * 0.15), 0),
+        "sim": lambda t: round(44.0 + 1.5 * math.sin(t * 0.15), 0),
     },
     {
         "id": "IAC",
@@ -304,11 +279,10 @@ PIDS_DB = [
         "unidade": "passos",
         "cmd": "21A2",
         "rapido": False,
-        "conf": "ok",
         "min": 0,
         "max": 200,
         "calc": lambda b: _num(_u16(b, 14), 1, 0),
-        "sim": lambda t: 74.0,
+        "sim": lambda t: 72.0,
     },
     {
         "id": "RPM_ALVO",
@@ -316,11 +290,10 @@ PIDS_DB = [
         "unidade": "rpm",
         "cmd": "213A",
         "rapido": False,
-        "conf": "ok",
         "min": 0,
         "max": 2000,
         "calc": lambda b: _num(_u16(b, 0), 1, 0),
-        "sim": lambda t: 780.0,
+        "sim": lambda t: 750.0,
     },
     {
         "id": "BARO",
@@ -328,11 +301,10 @@ PIDS_DB = [
         "unidade": "kPa",
         "cmd": "2160",
         "rapido": False,
-        "conf": "ok",
         "min": 70,
         "max": 105,
         "calc": lambda b: _num(_u16(b, 0), 0.1, 1),
-        "sim": lambda t: 99.5,
+        "sim": lambda t: 97.5,
     },
     {
         "id": "CARGA",
@@ -340,11 +312,10 @@ PIDS_DB = [
         "unidade": "%",
         "cmd": "21A2",
         "rapido": False,
-        "conf": "ok",
         "min": 0,
         "max": 100,
         "calc": lambda b: _num(min(100.0, (_u16(b, 2) or 0) * 0.1), 1, 0),
-        "sim": lambda t: 32.0,
+        "sim": lambda t: 31.0,
     },
     {
         "id": "TI_BASE",
@@ -352,11 +323,21 @@ PIDS_DB = [
         "unidade": "ms",
         "cmd": "216B",
         "rapido": False,
-        "conf": "ok",
         "min": 0,
         "max": 25,
         "calc": lambda b: _num(_u16(b, 0), 0.01, 2),
-        "sim": lambda t: 1.94,
+        "sim": lambda t: 1.80,
+    },
+    {
+        "id": "CLOSED_LOOP",
+        "nome": "Malha Fechada (2=Ativa 4=Fria)",
+        "unidade": "Code",
+        "cmd": "21A4",
+        "rapido": False,
+        "min": 0,
+        "max": 5,
+        "calc": lambda b: float(_u8(b, 6) or 0),
+        "sim": lambda t: 2.0,
     },
     {
         "id": "REGIME_MOTOR",
@@ -364,7 +345,6 @@ PIDS_DB = [
         "unidade": "Code",
         "cmd": "21A1",
         "rapido": False,
-        "conf": "ok",
         "min": 0,
         "max": 5,
         "calc": lambda b: float(_u8(b, 14) or 0),
@@ -376,7 +356,6 @@ PIDS_DB = [
         "unidade": "Code",
         "cmd": "21A6",
         "rapido": False,
-        "conf": "ok",
         "min": 0,
         "max": 5,
         "calc": lambda b: float(_u8(b, 4) or 0),
@@ -388,31 +367,17 @@ PIDS_DB = [
         "unidade": "Ativo",
         "cmd": "2159",
         "rapido": False,
-        "conf": "ok",
         "min": 0,
         "max": 1,
         "calc": lambda b: float(_u8(b, 0) or 0),
         "sim": lambda t: 1.0,
     },
     {
-        "id": "MARCHA_IND",
-        "nome": "Relacao Marcha Estimada",
-        "unidade": "Code",
-        "cmd": "2161",
-        "rapido": False,
-        "conf": "ok",
-        "min": 0,
-        "max": 10,
-        "calc": lambda b: _num(_u16(b, 0), 1, 0),
-        "sim": lambda t: 3.0,
-    },
-    {
         "id": "FAN_STATUS",
-        "nome": "(?) Eletroventilador",
+        "nome": "Eletroventilador (1=Desl 8=Lig)",
         "unidade": "Code",
         "cmd": "21A6",
         "rapido": False,
-        "conf": "provavel",
         "min": 0,
         "max": 10,
         "calc": lambda b: float(_u8(b, 8) or 0),

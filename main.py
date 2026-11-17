@@ -28,7 +28,7 @@ class GraficoRealtime(Widget):
         self.pontos = []
         self.lbl_info = Label(
             text="--",
-            font_size="12sp",
+            font_size="11.5sp",
             bold=True,
             color=(0.95, 0.95, 0.95, 1),
             halign="left",
@@ -38,8 +38,8 @@ class GraficoRealtime(Widget):
         self.bind(pos=self._reposicionar, size=self._reposicionar)
 
     def _reposicionar(self, *args):
-        self.lbl_info.pos = (self.x + dp(8), self.top - dp(24))
-        self.lbl_info.size = (self.width - dp(16), dp(20))
+        self.lbl_info.pos = (self.x + dp(8), self.top - dp(22))
+        self.lbl_info.size = (self.width - dp(16), dp(18))
         self.lbl_info.text_size = self.lbl_info.size
         self._desenhar()
 
@@ -72,8 +72,8 @@ class GraficoRealtime(Widget):
                 vmax = max(self.pontos)
                 if vmax - vmin < 1e-6:
                     vmax = vmin + 1.0
-                pad_y = dp(10)
-                altura_util = max(dp(10), self.height - dp(32))
+                pad_y = dp(8)
+                altura_util = max(dp(10), self.height - dp(28))
                 passo_x = self.width / max(1, self.max_pontos - 1)
                 coords = []
                 for idx, v in enumerate(self.pontos):
@@ -288,10 +288,10 @@ class TR4ScannerApp(App, TR4EngineMixin):
             card.add_widget(lbl_val)
             card.add_widget(rodape)
             self.grid_painel.add_widget(card)
-            self.cards_ui[pid_id] = (lbl_val, lbl_min, lbl_max, p["unidade"])
+            self.cards_ui[pid_id] = (lbl_val, lbl_min, lbl_max, p["unidade"], p.get("fmt"))
 
     # -------------------------------------------------------------------------
-    # Aba 2: PIDS (Selecao de quais parametros ler e exibir no Painel)
+    # Aba 2: PIDS (Selecao limpa sem colchetes hexadecimais)
     # -------------------------------------------------------------------------
     def _criar_tela_pids(self):
         scr = Screen(name="pids")
@@ -340,13 +340,13 @@ class TR4ScannerApp(App, TR4EngineMixin):
 
         for p in PIDS_DB:
             pid_id = p["id"]
-            linha = BoxLayout(size_hint_y=None, height=dp(42), padding=(dp(6), 0))
+            linha = BoxLayout(size_hint_y=None, height=dp(40), padding=(dp(6), 0))
             chk = CheckBox(active=self.selecionados.get(pid_id, False), size_hint_x=0.14)
             chk.bind(active=lambda inst, val, k=pid_id: self._toggle_pid_painel(k, val))
             self.checks_pids[pid_id] = chk
 
             lbl = Label(
-                text=f"[{p['cmd']}] {p['nome']} ({p['unidade']})",
+                text=f"{p['id']} - {p['nome']}",
                 font_size="12sp",
                 halign="left",
                 valign="middle",
@@ -381,27 +381,31 @@ class TR4ScannerApp(App, TR4EngineMixin):
         self._reconstruir_cards_painel()
 
     # -------------------------------------------------------------------------
-    # Aba 3: GRAFICO (2 canais simultaneos em tempo real)
+    # Aba 3: GRAFICO (3 canais simultaneos em tempo real)
     # -------------------------------------------------------------------------
     def _criar_tela_grafico(self):
         scr = Screen(name="grafico")
-        box = BoxLayout(orientation="vertical", spacing=dp(6))
+        box = BoxLayout(orientation="vertical", spacing=dp(4))
 
         opcoes = [f"{p['id']} - {p['nome']}" for p in PIDS_DB]
         self.mapa_spinner_pid = {f"{p['id']} - {p['nome']}": p["id"] for p in PIDS_DB}
-        self.pids_graf = ["RPM", "KNOCK_SENSOR"]
+        self.pids_graf = ["RPM", "STFT", "AVANCO"]
         self.graficos_lista = []
-        cores = [(0.22, 0.88, 0.48, 1), (0.95, 0.55, 0.22, 1)]
+        cores = [
+            (0.22, 0.88, 0.48, 1),
+            (0.95, 0.55, 0.22, 1),
+            (0.28, 0.68, 0.98, 1),
+        ]
 
-        for idx in range(2):
+        for idx in range(3):
             pid_ini = self.pids_graf[idx]
             texto_ini = next((k for k, v in self.mapa_spinner_pid.items() if v == pid_ini), opcoes[0])
             sp = Spinner(
                 text=texto_ini,
                 values=opcoes,
                 size_hint_y=None,
-                height=dp(38),
-                font_size="12sp",
+                height=dp(32),
+                font_size="11.5sp",
                 bold=True,
                 background_normal="",
                 background_color=(0.18, 0.24, 0.34, 1),
