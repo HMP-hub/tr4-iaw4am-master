@@ -1,108 +1,105 @@
 # coding: utf-8
 import threading
 from kivy.app import App
-from kivy.core.window import Window
-from kivy.metrics import dp
-from kivy.graphics import Color, Line, Rectangle
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
-from kivy.uix.screenmanager import ScreenManager, Screen, NoTransition
 from kivy.uix.button import Button
 from kivy.uix.label import Label
-from kivy.uix.checkbox import CheckBox
-from kivy.uix.spinner import Spinner
-from kivy.uix.widget import Widget
+from kivy.uix.togglebutton import ToggleButton
+from kivy.graphics import Color, Line, Rectangle
+from kivy.core.window import Window
 
 from pids import PIDS_DB
 from engine import TR4EngineMixin
 
-Window.clearcolor = (0.08, 0.09, 0.11, 1)
+Window.clearcolor = (0.07, 0.08, 0.10, 1)
 
 
-class GraficoRealtime(Widget):
-    def __init__(self, cor_linha=(0.2, 0.85, 0.45, 1), max_pontos=90, **kwargs):
-        super().__init__(**kwargs)
+class GraficoTempoReal(BoxLayout):
+    def __init__(self, titulo, unidade, cor_linha, min_v, max_v, **kwargs):
+        super().__init__(orientation="vertical", padding=6, spacing=2, **kwargs)
+        self.titulo = titulo
+        self.unidade = unidade
         self.cor_linha = cor_linha
-        self.max_pontos = max_pontos
-        self.pontos = []
-        self.lbl_info = Label(
-            text="--",
-            font_size="11.5sp",
+        self.min_v = min_v
+        self.max_v = max_v
+        self.historico = []
+        self.max_pontos = 80
+
+        self.lbl_topo = Label(
+            text=f"{titulo}: -- {unidade}",
+            size_hint_y=0.22,
             bold=True,
-            color=(0.95, 0.95, 0.95, 1),
-            halign="left",
-            valign="top",
+            color=cor_linha,
+            font_size="14sp",
         )
-        self.add_widget(self.lbl_info)
-        self.bind(pos=self._reposicionar, size=self._reposicionar)
+        self.add_widget(self.lbl_topo)
 
-    def _reposicionar(self, *args):
-        self.lbl_info.pos = (self.x + dp(8), self.top - dp(22))
-        self.lbl_info.size = (self.width - dp(16), dp(18))
-        self.lbl_info.text_size = self.lbl_info.size
-        self._desenhar()
+        self.area = BoxLayout(size_hint_y=0.78)
+        self.add_widget(self.area)
+        self.area.bind(pos=self.desenhar, size=self.desenhar)
 
-    def limpar(self):
-        self.pontos = []
-        self.lbl_info.text = "--"
-        self._desenhar()
+    def adicionar_ponto(self, valor):
+        self.historico.append(valor)
+        if len(self.historico) > self.max_pontos:
+            self.historico.pop(0)
+        self.lbl_topo.text = f"{self.titulo}: {valor} {self.unidade}"
+        self.desenhar()
 
-    def adicionar_ponto(self, val):
-        self.pontos.append(float(val))
-        if len(self.pontos) > self.max_pontos:
-            self.pontos.pop(0)
-        vmin = min(self.pontos)
-        vmax = max(self.pontos)
-        self.lbl_info.text = f"Atual: {val}   |   Min: {vmin}   |   Max: {vmax}"
-        self._desenhar()
-
-    def _desenhar(self):
-        self.canvas.before.clear()
-        with self.canvas.before:
+    def desenhar(self, *args):
+        self.area.canvas.clear()
+        x0, y0 = self.area.pos
+        w, h = self.area.size
+        if w <= 10 or h <= 10:
+            return
+        with self.area.canvas:
             Color(0.12, 0.14, 0.18, 1)
-            Rectangle(pos=self.pos, size=self.size)
-            Color(0.22, 0.25, 0.30, 1)
-            for frac in (0.25, 0.5, 0.75):
-                y_grid = self.y + self.height * frac
-                Line(points=[self.x, y_grid, self.right, y_grid], width=1)
+            Rectangle(pos=(x0, y0), size=(w, h))
+            Color(0.25, 0.28, 0.34, 1)
+            Line(rectangle=(x0, y0, w, h), width=1)
+            Line(points=[x0, y0 + h * 0.5, x0 + w, y0 + h * 0.5], width=1)
 
-            if len(self.pontos) >= 2:
-                vmin = min(self.pontos)
-                vmax = max(self.pontos)
-                if vmax - vmin < 1e-6:
-                    vmax = vmin + 1.0
-                pad_y = dp(8)
-                altura_util = max(dp(10), self.height - dp(28))
-                passo_x = self.width / max(1, self.max_pontos - 1)
-                coords = []
-                for idx, v in enumerate(self.pontos):
-                    px = self.x + idx * passo_x
-                    norm = (v - vmin) / (vmax - vmin)
-                    py = self.y + pad_y + norm * altura_util
-                    coords.extend([px, py])
+            if len(self.historico) >= 2:
+                vmin = min(self.min_v, min(self.historico))
+                vmax = max(self.max_v, max(self.historico))
+                if vmax == vmin:
+                    vmax = vmin + 1
+                pontos = []
+                passo_x = w / float(self.max_pontos - 1)
+                for i, val in enumerate(self.historico):
+                    px = x0 + i * passo_x
+                    norm = (val - vmin) / float(vmax - vmin)
+                    py = y0 + norm * (h - 8) + 4
+                    pontos.extend([px, py])
                 Color(*self.cor_linha)
-                Line(points=coords, width=dp(1.8))
+                Line(points=pontos, width=1.8)
 
 
-class TR4ScannerApp(App, TR4EngineMixin):
+class TR4ScannerApp(TR4EngineMixin, App):
     def build(self):
         self.title = "TR4 IAW4AM Master"
+        self.rodando = False
+        self.varrendo = False
+        self.modo_simulacao = False
+        self.estado_conexao = "DESCONECTADO"
+        self.cancelar_conexao = False
+        self._con_seq = 0
+
+        self.gravando_log = False
+        self.log_pausado = False
+        self.linhas_gravadas_log = 0
+        self.caminho_log_atual = ""
+        self.arquivo_log = None
+        self.writer_log = None
+
         self.bt_lock = threading.Lock()
         self.bt_socket = None
         self.bt_in = None
         self.bt_out = None
         self.bt_salvo_addr = ""
         self.bt_salvo_nome = ""
-        self.estado_conexao = "DESCONECTADO"
-        self.cancelar_conexao = False
-        self.rodando = False
-        self.varrendo = False
-        self.modo_simulacao = False
-        self.gravando_log = False
-        self.log_pausado = False
-        self.arquivo_log = None
-        self.writer_log = None
+        self._carregar_bt_salvo()
 
         self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
         self.valores_min = {}
@@ -110,559 +107,346 @@ class TR4ScannerApp(App, TR4EngineMixin):
         self.selecionados = {p["id"]: p["rapido"] for p in PIDS_DB}
         self.selecionados_log = {p["id"]: p["rapido"] for p in PIDS_DB}
         self.cards_ui = {}
+        self.checks_pids_ui = {}
+        self.checks_log_ui = {}
 
-        self._carregar_bt_salvo()
-        self._init_telemetria_viagem()
+        raiz = BoxLayout(orientation="vertical", padding=6, spacing=6)
 
-        root = BoxLayout(orientation="vertical", padding=dp(6), spacing=dp(6))
-
-        # Barra de status superior
         self.lbl_status = Label(
             text="DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)",
-            size_hint_y=None,
-            height=dp(28),
-            font_size="12sp",
+            size_hint_y=0.055,
             bold=True,
             color=(1, 0.78, 0.2, 1),
+            font_size="13sp",
         )
-        root.add_widget(self.lbl_status)
+        raiz.add_widget(self.lbl_status)
 
-        # Botoes principais de conexao
-        barra_con = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(6))
+        barra_con = BoxLayout(size_hint_y=0.078, spacing=6)
+
         self.btn_bt_lista = Button(
-            text="ESCOLHER\nBLUETOOTH",
-            font_size="12sp",
+            text="ESCOLHER\nBLUETOOTH" if not self.bt_salvo_addr else "TROCAR\nBLUETOOTH",
+            size_hint_x=0.31,
+            background_normal="",
+            background_color=(0.12, 0.45, 0.80, 1),
+            font_size="11sp",
             bold=True,
             halign="center",
-            background_normal="",
-            background_color=(0.12, 0.45, 0.78, 1),
         )
         self.btn_bt_lista.bind(on_release=self.conectar_bluetooth)
 
         self.btn_acao_con = Button(
             text="CONECTAR",
-            font_size="13sp",
-            bold=True,
-            halign="center",
+            size_hint_x=0.43,
             background_normal="",
             background_color=(0.14, 0.62, 0.35, 1),
+            font_size="12sp",
+            bold=True,
+            halign="center",
         )
         self.btn_acao_con.bind(on_release=self.acao_botao_conexao)
 
-        btn_sim = Button(
+        self.btn_sim = Button(
             text="SIMULACAO",
-            font_size="12sp",
-            bold=True,
+            size_hint_x=0.26,
             background_normal="",
-            background_color=(0.45, 0.25, 0.68, 1),
+            background_color=(0.45, 0.30, 0.72, 1),
+            font_size="11sp",
+            bold=True,
+            halign="center",
         )
-        btn_sim.bind(on_release=self.iniciar_simulacao)
+        self.btn_sim.bind(on_release=self.iniciar_simulacao)
 
         barra_con.add_widget(self.btn_bt_lista)
         barra_con.add_widget(self.btn_acao_con)
-        barra_con.add_widget(btn_sim)
-        root.add_widget(barra_con)
-
-        # Barra de navegacao das 6 abas
-        barra_abas = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(4))
-        self.sm = ScreenManager(transition=NoTransition())
-        self.btns_abas = {}
-        abas_def = [
-            ("painel", "PAINEL"),
-            ("pids", "PIDS"),
-            ("grafico", "GRAFICO"),
-            ("log", "LOG CSV"),
-            ("boletim", "BOLETIM"),
-            ("eng", "ENG/DTC"),
-        ]
-        for nome_scr, rotulo in abas_def:
-            b = Button(
-                text=rotulo,
-                font_size="11sp",
-                bold=True,
-                background_normal="",
-                background_color=(0.18, 0.21, 0.27, 1),
-            )
-            b.bind(on_release=lambda inst, n=nome_scr: self.trocar_aba(n))
-            self.btns_abas[nome_scr] = b
-            barra_abas.add_widget(b)
-        root.add_widget(barra_abas)
-
-        self.sm.add_widget(self._criar_tela_painel())
-        self.sm.add_widget(self._criar_tela_pids())
-        self.sm.add_widget(self._criar_tela_grafico())
-        self.sm.add_widget(self._criar_tela_log())
-        self.sm.add_widget(self._criar_tela_boletim())
-        self.sm.add_widget(self._criar_tela_eng())
-        root.add_widget(self.sm)
+        barra_con.add_widget(self.btn_sim)
+        raiz.add_widget(barra_con)
 
         self._atualizar_estado_conexao("DESCONECTADO")
-        self.trocar_aba("painel")
-        return root
 
-    def trocar_aba(self, nome_scr):
-        self.sm.current = nome_scr
-        for k, btn in self.btns_abas.items():
-            btn.background_color = (0.16, 0.52, 0.78, 1) if k == nome_scr else (0.18, 0.21, 0.27, 1)
-        if nome_scr == "boletim":
-            self.atualizar_tela_boletim()
+        barra_abas = BoxLayout(size_hint_y=0.065, spacing=4)
+        self.botoes_aba = {}
+        for aba_id, aba_nome in [
+            ("PAINEL", "PAINEL"),
+            ("SELETOR", "PIDS"),
+            ("GRAFICOS", "GRAFICO"),
+            ("LOG", "LOG CSV"),
+            ("ENGENHARIA", "ENG/DTC"),
+        ]:
+            b = Button(text=aba_nome, background_normal="", background_color=(0.18, 0.21, 0.27, 1), font_size="12sp", bold=True)
+            b.bind(on_release=lambda inst, x=aba_id: self.trocar_aba(x))
+            self.botoes_aba[aba_id] = b
+            barra_abas.add_widget(b)
+        raiz.add_widget(barra_abas)
 
-    # -------------------------------------------------------------------------
-    # Aba 1: PAINEL (Cards em tempo real + Zerar Min/Max)
-    # -------------------------------------------------------------------------
+        self.area_conteudo = BoxLayout(size_hint_y=0.802)
+        raiz.add_widget(self.area_conteudo)
+
+        self.telas = {
+            "PAINEL": self._criar_tela_painel(),
+            "SELETOR": self._criar_tela_seletor(),
+            "GRAFICOS": self._criar_tela_graficos(),
+            "LOG": self._criar_tela_log(),
+            "ENGENHARIA": self._criar_tela_engenharia(),
+        }
+
+        self.trocar_aba("PAINEL")
+        return raiz
+
+    def on_stop(self):
+        self._manter_tela_acesa(False)
+        self.desconectar_ecu()
+
+    def trocar_aba(self, aba_id):
+        self.area_conteudo.clear_widgets()
+        self.area_conteudo.add_widget(self.telas[aba_id])
+        for k, btn in self.botoes_aba.items():
+            btn.background_color = (0.15, 0.55, 0.75, 1) if k == aba_id else (0.18, 0.21, 0.27, 1)
+        if aba_id == "PAINEL":
+            self._reconstruir_cards_painel()
+
     def _criar_tela_painel(self):
-        scr = Screen(name="painel")
-        box = BoxLayout(orientation="vertical", spacing=dp(6))
-
+        box = BoxLayout(orientation="vertical", spacing=6)
         btn_zerar = Button(
             text="ZERAR MIN / MAX",
-            size_hint_y=None,
-            height=dp(36),
-            font_size="12sp",
-            bold=True,
+            size_hint_y=0.075,
             background_normal="",
             background_color=(0.24, 0.28, 0.36, 1),
+            bold=True,
+            font_size="13sp",
         )
         btn_zerar.bind(on_release=self.zerar_min_max)
         box.add_widget(btn_zerar)
 
-        scroll = ScrollView(bar_width=dp(5))
-        self.grid_painel = GridLayout(cols=2, spacing=dp(8), size_hint_y=None, padding=(dp(2), dp(2)))
+        scroll = ScrollView(size_hint_y=0.925)
+        self.grid_painel = GridLayout(cols=2, spacing=6, size_hint_y=None, padding=2)
         self.grid_painel.bind(minimum_height=self.grid_painel.setter("height"))
         scroll.add_widget(self.grid_painel)
         box.add_widget(scroll)
-
-        self._reconstruir_cards_painel()
-        scr.add_widget(box)
-        return scr
+        return box
 
     def _reconstruir_cards_painel(self):
         self.grid_painel.clear_widgets()
         self.cards_ui = {}
-        for p in PIDS_DB:
-            pid_id = p["id"]
-            if not self.selecionados.get(pid_id, False):
+        for pid in PIDS_DB:
+            if not self.selecionados.get(pid["id"], False):
                 continue
-            card = BoxLayout(
-                orientation="vertical",
-                size_hint_y=None,
-                height=dp(106),
-                padding=(dp(6), dp(6)),
-                spacing=dp(2),
-            )
+            card = BoxLayout(orientation="vertical", size_hint_y=None, height=96, padding=6)
             with card.canvas.before:
                 Color(0.13, 0.15, 0.20, 1)
-                bg = Rectangle(pos=card.pos, size=card.size)
-            card.bind(pos=lambda inst, v, r=bg: setattr(r, "pos", v))
-            card.bind(size=lambda inst, v, r=bg: setattr(r, "size", v))
+                rect = Rectangle(pos=card.pos, size=card.size)
+            card.bind(pos=lambda inst, val, r=rect: setattr(r, "pos", val))
+            card.bind(size=lambda inst, val, r=rect: setattr(r, "size", val))
 
-            lbl_nome = Label(
-                text=p["nome"],
-                font_size="13sp",
-                bold=True,
-                color=(0.82, 0.87, 0.94, 1),
-                halign="center",
-                valign="middle",
-                size_hint_y=0.36,
-            )
-            lbl_nome.bind(size=lambda inst, v: setattr(inst, "text_size", v))
-
-            lbl_val = Label(
-                text="--",
-                font_size="21sp",
-                bold=True,
-                color=(0.25, 0.92, 0.55, 1),
-                halign="center",
-                valign="middle",
-                size_hint_y=0.40,
-            )
-            lbl_val.bind(size=lambda inst, v: setattr(inst, "text_size", v))
-
-            rodape = BoxLayout(size_hint_y=0.24)
-            lbl_min = Label(text="MIN: --", font_size="10sp", color=(0.55, 0.75, 0.95, 1), halign="left")
-            lbl_max = Label(text="MAX: --", font_size="10sp", color=(0.95, 0.65, 0.45, 1), halign="right")
-            rodape.add_widget(lbl_min)
-            rodape.add_widget(lbl_max)
+            lbl_nome = Label(text=pid["nome"], size_hint_y=0.28, font_size="12sp", color=(0.75, 0.80, 0.88, 1), bold=True)
+            val_atual = self.valores_atuais.get(pid["id"], "--")
+            txt_val = f"{val_atual} {pid['unidade']}" if val_atual != "--" else "--"
+            lbl_val = Label(text=txt_val, size_hint_y=0.46, font_size="22sp", bold=True, color=(0.30, 0.92, 0.55, 1))
+            vmin = self.valores_min.get(pid["id"], "--")
+            vmax = self.valores_max.get(pid["id"], "--")
+            lbl_mm = Label(text=f"MIN: {vmin}   |   MAX: {vmax}", size_hint_y=0.26, font_size="11sp", color=(0.60, 0.68, 0.78, 1))
 
             card.add_widget(lbl_nome)
             card.add_widget(lbl_val)
-            card.add_widget(rodape)
+            card.add_widget(lbl_mm)
             self.grid_painel.add_widget(card)
-            self.cards_ui[pid_id] = (lbl_val, lbl_min, lbl_max, p["unidade"], p.get("fmt"))
+            self.cards_ui[pid["id"]] = (lbl_val, lbl_mm, pid["unidade"])
 
-    # -------------------------------------------------------------------------
-    # Aba 2: PIDS (Selecao limpa sem colchetes hexadecimais)
-    # -------------------------------------------------------------------------
-    def _criar_tela_pids(self):
-        scr = Screen(name="pids")
-        box = BoxLayout(orientation="vertical", spacing=dp(6))
+    def _criar_tela_seletor(self):
+        box = BoxLayout(orientation="vertical", spacing=6)
+        barra_presets = BoxLayout(size_hint_y=0.08, spacing=5)
+        b_rap = Button(text="PRESET RAPIDO", background_normal="", background_color=(0.15, 0.52, 0.70, 1), font_size="12sp", bold=True)
+        b_rap.bind(on_release=lambda x: self._aplicar_preset("RAPIDO"))
+        b_todos = Button(text="MARCAR TODOS", background_normal="", background_color=(0.20, 0.58, 0.35, 1), font_size="12sp", bold=True)
+        b_todos.bind(on_release=lambda x: self._aplicar_preset("TODOS"))
+        b_limpar = Button(text="DESMARCAR", background_normal="", background_color=(0.65, 0.25, 0.25, 1), font_size="12sp", bold=True)
+        b_limpar.bind(on_release=lambda x: self._aplicar_preset("NENHUM"))
+        barra_presets.add_widget(b_rap)
+        barra_presets.add_widget(b_todos)
+        barra_presets.add_widget(b_limpar)
+        box.add_widget(barra_presets)
 
-        top_btns = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
-        b_rap = Button(
-            text="PADRAO\nRAPIDO",
-            font_size="10.5sp",
-            bold=True,
-            halign="center",
-            background_normal="",
-            background_color=(0.15, 0.48, 0.72, 1),
-        )
-        b_rap.bind(on_release=lambda *a: self._aplicar_preset_pids("rapido"))
-
-        b_todos = Button(
-            text="MARCAR\nTODOS",
-            font_size="10.5sp",
-            bold=True,
-            halign="center",
-            background_normal="",
-            background_color=(0.18, 0.55, 0.35, 1),
-        )
-        b_todos.bind(on_release=lambda *a: self._aplicar_preset_pids("todos"))
-
-        b_nenhum = Button(
-            text="DESMARCAR\nTODOS",
-            font_size="10.5sp",
-            bold=True,
-            halign="center",
-            background_normal="",
-            background_color=(0.68, 0.24, 0.24, 1),
-        )
-        b_nenhum.bind(on_release=lambda *a: self._aplicar_preset_pids("nenhum"))
-
-        top_btns.add_widget(b_rap)
-        top_btns.add_widget(b_todos)
-        top_btns.add_widget(b_nenhum)
-        box.add_widget(top_btns)
-
-        scroll = ScrollView(bar_width=dp(6))
-        lista = GridLayout(cols=1, spacing=dp(4), size_hint_y=None)
-        lista.bind(minimum_height=lista.setter("height"))
-        self.checks_pids = {}
-
-        for p in PIDS_DB:
-            pid_id = p["id"]
-            linha = BoxLayout(size_hint_y=None, height=dp(40), padding=(dp(6), 0))
-            chk = CheckBox(active=self.selecionados.get(pid_id, False), size_hint_x=0.14)
-            chk.bind(active=lambda inst, val, k=pid_id: self._toggle_pid_painel(k, val))
-            self.checks_pids[pid_id] = chk
-
-            lbl = Label(
-                text=f"{p['id']} - {p['nome']}",
-                font_size="12sp",
+        scroll = ScrollView(size_hint_y=0.92)
+        grid = GridLayout(cols=1, spacing=4, size_hint_y=None)
+        grid.bind(minimum_height=grid.setter("height"))
+        for pid in PIDS_DB:
+            tb = ToggleButton(
+                text=f"  {pid['nome']} ({pid['unidade']})",
+                size_hint_y=None,
+                height=48,
+                state="down" if self.selecionados[pid["id"]] else "normal",
+                font_size="14sp",
                 halign="left",
                 valign="middle",
-                size_hint_x=0.86,
+                padding=(14, 0),
             )
-            lbl.bind(size=lambda inst, v: setattr(inst, "text_size", v))
-            linha.add_widget(chk)
-            linha.add_widget(lbl)
-            lista.add_widget(linha)
-
-        scroll.add_widget(lista)
+            tb.bind(size=tb.setter("text_size"))
+            tb.bind(state=lambda inst, st, pid_id=pid["id"]: self._toggle_pid(pid_id, st))
+            self.checks_pids_ui[pid["id"]] = tb
+            grid.add_widget(tb)
+        scroll.add_widget(grid)
         box.add_widget(scroll)
-        scr.add_widget(box)
-        return scr
+        return box
 
-    def _toggle_pid_painel(self, pid_id, ativo):
-        self.selecionados[pid_id] = bool(ativo)
-        self._reconstruir_cards_painel()
+    def _toggle_pid(self, pid_id, state):
+        self.selecionados[pid_id] = (state == "down")
 
-    def _aplicar_preset_pids(self, modo):
-        for p in PIDS_DB:
-            pid_id = p["id"]
-            if modo == "todos":
-                novo = True
-            elif modo == "nenhum":
-                novo = False
+    def _aplicar_preset(self, tipo):
+        for pid in PIDS_DB:
+            pid_id = pid["id"]
+            if tipo == "RAPIDO":
+                ativo = pid["rapido"]
+            elif tipo == "TODOS":
+                ativo = True
             else:
-                novo = p["rapido"]
-            self.selecionados[pid_id] = novo
-            if pid_id in self.checks_pids:
-                self.checks_pids[pid_id].active = novo
-        self._reconstruir_cards_painel()
+                ativo = False
+            self.selecionados[pid_id] = ativo
+            self.checks_pids_ui[pid_id].state = "down" if ativo else "normal"
 
-    # -------------------------------------------------------------------------
-    # Aba 3: GRAFICO (3 canais simultaneos em tempo real)
-    # -------------------------------------------------------------------------
-    def _criar_tela_grafico(self):
-        scr = Screen(name="grafico")
-        box = BoxLayout(orientation="vertical", spacing=dp(4))
-
-        opcoes = [f"{p['id']} - {p['nome']}" for p in PIDS_DB]
-        self.mapa_spinner_pid = {f"{p['id']} - {p['nome']}": p["id"] for p in PIDS_DB}
-        self.pids_graf = ["RPM", "STFT", "AVANCO"]
-        self.graficos_lista = []
-        cores = [
-            (0.22, 0.88, 0.48, 1),
-            (0.95, 0.55, 0.22, 1),
-            (0.28, 0.68, 0.98, 1),
+    def _criar_tela_graficos(self):
+        box = BoxLayout(orientation="vertical", spacing=6)
+        self.graficos_lista = [
+            GraficoTempoReal("Rotacao (RPM)", "rpm", (0.25, 0.85, 1.0, 1), 0, 6000),
+            GraficoTempoReal("Sonda Lambda Pre-Cat", "mV", (0.30, 0.95, 0.45, 1), 0, 1000),
+            GraficoTempoReal("Integrador Lambda (STFT)", "%", (1.0, 0.75, 0.20, 1), -30, 30),
+            GraficoTempoReal("Avanco de Ignicao", "graus", (0.95, 0.40, 0.55, 1), -15, 45),
         ]
+        self.pids_graf = ["RPM", "LAMBDA_1", "STFT", "AVANCO"]
+        for g in self.graficos_lista:
+            box.add_widget(g)
+        return box
 
-        for idx in range(3):
-            pid_ini = self.pids_graf[idx]
-            texto_ini = next((k for k, v in self.mapa_spinner_pid.items() if v == pid_ini), opcoes[0])
-            sp = Spinner(
-                text=texto_ini,
-                values=opcoes,
-                size_hint_y=None,
-                height=dp(32),
-                font_size="11.5sp",
-                bold=True,
-                background_normal="",
-                background_color=(0.18, 0.24, 0.34, 1),
-            )
-            graf = GraficoRealtime(cor_linha=cores[idx])
-            sp.bind(text=lambda inst, txt, i=idx, g=graf: self._trocar_pid_grafico(i, txt, g))
-            self.graficos_lista.append(graf)
-            box.add_widget(sp)
-            box.add_widget(graf)
-
-        scr.add_widget(box)
-        return scr
-
-    def _trocar_pid_grafico(self, idx, texto_sel, graf_widget):
-        pid_id = self.mapa_spinner_pid.get(texto_sel)
-        if pid_id:
-            self.pids_graf[idx] = pid_id
-            self.selecionados[pid_id] = True
-            if pid_id in self.checks_pids:
-                self.checks_pids[pid_id].active = True
-            self._reconstruir_cards_painel()
-            graf_widget.limpar()
-
-    # -------------------------------------------------------------------------
-    # Aba 4: LOG CSV (Gravacao na pasta Download)
-    # -------------------------------------------------------------------------
     def _criar_tela_log(self):
-        scr = Screen(name="log")
-        box = BoxLayout(orientation="vertical", spacing=dp(6))
-
+        box = BoxLayout(orientation="vertical", spacing=6, padding=4)
         self.lbl_log_info = Label(
-            text="Selecione os PIDs abaixo e clique em INICIAR LOG CSV.\nOs arquivos sao salvos em /sdcard/Download.",
-            size_hint_y=None,
-            height=dp(52),
+            text="Selecione abaixo os PIDs para gravar no CSV:\n(Pasta de destino: /sdcard/Download/)",
+            size_hint_y=0.14,
             font_size="12sp",
-            halign="left",
-            valign="middle",
+            color=(0.85, 0.90, 0.96, 1),
+            halign="center",
         )
-        self.lbl_log_info.bind(size=lambda inst, v: setattr(inst, "text_size", v))
         box.add_widget(self.lbl_log_info)
 
-        barra_log = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
-        b_ini = Button(
-            text="INICIAR /\nCONTINUAR",
-            font_size="11sp",
-            bold=True,
-            halign="center",
-            background_normal="",
-            background_color=(0.14, 0.62, 0.35, 1),
-        )
-        b_ini.bind(on_release=self.iniciar_gravacao_log)
-
-        b_pausa = Button(
-            text="PAUSAR",
-            font_size="11sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.82, 0.52, 0.14, 1),
-        )
-        b_pausa.bind(on_release=self.pausar_gravacao_log)
-
-        b_parar = Button(
-            text="SALVAR E\nENCERRAR",
-            font_size="11sp",
-            bold=True,
-            halign="center",
-            background_normal="",
-            background_color=(0.76, 0.22, 0.22, 1),
-        )
-        b_parar.bind(on_release=self.parar_gravacao_log)
-
-        barra_log.add_widget(b_ini)
-        barra_log.add_widget(b_pausa)
-        barra_log.add_widget(b_parar)
-        box.add_widget(barra_log)
-
-        barra_sel_log = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(5))
-        bl_rap = Button(
-            text="PADRAO\nRAPIDO",
-            font_size="10.5sp",
-            bold=True,
-            halign="center",
-            background_normal="",
-            background_color=(0.15, 0.48, 0.72, 1),
-        )
-        bl_rap.bind(on_release=lambda *a: self._aplicar_preset_log("rapido"))
-
-        bl_todos = Button(
-            text="MARCAR\nTODOS",
-            font_size="10.5sp",
-            bold=True,
-            halign="center",
-            background_normal="",
-            background_color=(0.18, 0.55, 0.35, 1),
-        )
-        bl_todos.bind(on_release=lambda *a: self._aplicar_preset_log("todos"))
-
-        bl_nenhum = Button(
-            text="DESMARCAR\nTODOS",
-            font_size="10.5sp",
-            bold=True,
-            halign="center",
-            background_normal="",
-            background_color=(0.68, 0.24, 0.24, 1),
-        )
-        bl_nenhum.bind(on_release=lambda *a: self._aplicar_preset_log("nenhum"))
-
-        barra_sel_log.add_widget(bl_rap)
-        barra_sel_log.add_widget(bl_todos)
-        barra_sel_log.add_widget(bl_nenhum)
+        barra_sel_log = BoxLayout(size_hint_y=0.075, spacing=5)
+        b_log_rap = Button(text="PIDS ESSENCIAIS", background_normal="", background_color=(0.15, 0.52, 0.70, 1), font_size="11sp", bold=True)
+        b_log_rap.bind(on_release=lambda x: self._preset_log("RAPIDO"))
+        b_log_all = Button(text="TODOS OS PIDS", background_normal="", background_color=(0.20, 0.58, 0.35, 1), font_size="11sp", bold=True)
+        b_log_all.bind(on_release=lambda x: self._preset_log("TODOS"))
+        b_log_clr = Button(text="LIMPAR SELECAO", background_normal="", background_color=(0.45, 0.30, 0.30, 1), font_size="11sp", bold=True)
+        b_log_clr.bind(on_release=lambda x: self._preset_log("NENHUM"))
+        barra_sel_log.add_widget(b_log_rap)
+        barra_sel_log.add_widget(b_log_all)
+        barra_sel_log.add_widget(b_log_clr)
         box.add_widget(barra_sel_log)
 
-        scroll = ScrollView(bar_width=dp(6))
-        lista = GridLayout(cols=1, spacing=dp(4), size_hint_y=None)
-        lista.bind(minimum_height=lista.setter("height"))
-        self.checks_log = {}
-
-        for p in PIDS_DB:
-            pid_id = p["id"]
-            linha = BoxLayout(size_hint_y=None, height=dp(38), padding=(dp(6), 0))
-            chk = CheckBox(active=self.selecionados_log.get(pid_id, False), size_hint_x=0.14)
-            chk.bind(active=lambda inst, val, k=pid_id: self.selecionados_log.update({k: bool(val)}))
-            self.checks_log[pid_id] = chk
-
-            lbl = Label(
-                text=f"{p['id']} - {p['nome']}",
-                font_size="12sp",
+        scroll = ScrollView(size_hint_y=0.675)
+        grid = GridLayout(cols=1, spacing=4, size_hint_y=None)
+        grid.bind(minimum_height=grid.setter("height"))
+        for pid in PIDS_DB:
+            tb = ToggleButton(
+                text=f"  {pid['nome']} ({pid['unidade']})",
+                size_hint_y=None,
+                height=44,
+                state="down" if self.selecionados_log[pid["id"]] else "normal",
+                font_size="13sp",
                 halign="left",
                 valign="middle",
-                size_hint_x=0.86,
+                padding=(14, 0),
             )
-            lbl.bind(size=lambda inst, v: setattr(inst, "text_size", v))
-            linha.add_widget(chk)
-            linha.add_widget(lbl)
-            lista.add_widget(linha)
-        scroll.add_widget(lista)
+            tb.bind(size=tb.setter("text_size"))
+            tb.bind(state=lambda inst, st, pid_id=pid["id"]: self._toggle_pid_log(pid_id, st))
+            self.checks_log_ui[pid["id"]] = tb
+            grid.add_widget(tb)
+        scroll.add_widget(grid)
         box.add_widget(scroll)
-        scr.add_widget(box)
-        return scr
 
-    def _aplicar_preset_log(self, modo):
-        for p in PIDS_DB:
-            pid_id = p["id"]
-            if modo == "todos":
-                novo = True
-            elif modo == "nenhum":
-                novo = False
+        barra_grav = BoxLayout(size_hint_y=0.11, spacing=5)
+        btn_ini = Button(text="INICIAR /\nCONTINUAR", background_normal="", background_color=(0.15, 0.65, 0.35, 1), bold=True, font_size="11sp", halign="center")
+        btn_ini.bind(on_release=self.iniciar_gravacao_log)
+        btn_pausar = Button(text="PAUSAR\nLOG", background_normal="", background_color=(0.82, 0.55, 0.12, 1), bold=True, font_size="11sp", halign="center")
+        btn_pausar.bind(on_release=self.pausar_gravacao_log)
+        btn_parar = Button(text="ENCERRAR\nE SALVAR", background_normal="", background_color=(0.78, 0.22, 0.22, 1), bold=True, font_size="11sp", halign="center")
+        btn_parar.bind(on_release=self.parar_gravacao_log)
+        btn_bol = Button(text="GERAR\nBOLETIM", background_normal="", background_color=(0.22, 0.48, 0.78, 1), bold=True, font_size="11sp", halign="center")
+        btn_bol.bind(on_release=self.gerar_boletim_tecnico)
+        barra_grav.add_widget(btn_ini)
+        barra_grav.add_widget(btn_pausar)
+        barra_grav.add_widget(btn_parar)
+        barra_grav.add_widget(btn_bol)
+        box.add_widget(barra_grav)
+        return box
+
+    def _toggle_pid_log(self, pid_id, state):
+        self.selecionados_log[pid_id] = (state == "down")
+
+    def _preset_log(self, tipo):
+        for pid in PIDS_DB:
+            pid_id = pid["id"]
+            if tipo == "RAPIDO":
+                ativo = pid["rapido"]
+            elif tipo == "TODOS":
+                ativo = True
             else:
-                novo = p["rapido"]
-            self.selecionados_log[pid_id] = novo
-            if pid_id in self.checks_log:
-                self.checks_log[pid_id].active = novo
+                ativo = False
+            self.selecionados_log[pid_id] = ativo
+            self.checks_log_ui[pid_id].state = "down" if ativo else "normal"
 
-    # -------------------------------------------------------------------------
-    # Aba 5: BOLETIM (Diagnostico automatico pos-viagem)
-    # -------------------------------------------------------------------------
-    def _criar_tela_boletim(self):
-        scr = Screen(name="boletim")
-        box = BoxLayout(orientation="vertical", spacing=dp(6))
+    def _criar_tela_engenharia(self):
+        box = BoxLayout(orientation="vertical", spacing=8, padding=6)
 
-        scroll = ScrollView(bar_width=dp(6))
-        self.lbl_boletim = Label(
-            text="Conecte ao veiculo para iniciar o monitoramento automatico.",
-            font_size="13sp",
-            halign="left",
-            valign="top",
-            size_hint_y=None,
-            padding=(dp(8), dp(8)),
-        )
-        self.lbl_boletim.bind(width=lambda inst, w: setattr(inst, "text_size", (w, None)))
-        self.lbl_boletim.bind(texture_size=lambda inst, ts: setattr(inst, "height", max(dp(260), ts[1] + dp(16))))
-        scroll.add_widget(self.lbl_boletim)
-        box.add_widget(scroll)
-
-        barra_bol = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(6))
-        b_atu = Button(
-            text="ATUALIZAR",
-            font_size="12sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.15, 0.48, 0.72, 1),
-        )
-        b_atu.bind(on_release=lambda *a: self.atualizar_tela_boletim())
-
-        b_zer = Button(
-            text="NOVA VIAGEM",
-            font_size="12sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.80, 0.48, 0.14, 1),
-        )
-        b_zer.bind(on_release=self.reiniciar_telemetria_viagem)
-
-        b_sal = Button(
-            text="SALVAR TXT",
-            font_size="12sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.14, 0.62, 0.35, 1),
-        )
-        b_sal.bind(on_release=self.salvar_boletim_txt)
-
-        barra_bol.add_widget(b_atu)
-        barra_bol.add_widget(b_zer)
-        barra_bol.add_widget(b_sal)
-        box.add_widget(barra_bol)
-
-        scr.add_widget(box)
-        return scr
-
-    # -------------------------------------------------------------------------
-    # Aba 6: ENG/DTC (Falhas, Info ECU, Calibracao 4 Estados e Varredura)
-    # -------------------------------------------------------------------------
-    def _criar_tela_eng(self):
-        scr = Screen(name="eng")
-        box = BoxLayout(orientation="vertical", spacing=dp(6))
-
-        scroll = ScrollView(size_hint_y=0.44, bar_width=dp(6))
+        self.scroll_eng = ScrollView(size_hint_y=0.52)
         self.lbl_eng = Label(
             text="Diagnostico Avancado KWP2000 - ECU IAW 4AM\n\nSelecione uma operacao abaixo:",
+            size_hint_y=None,
             font_size="13sp",
+            markup=True,
             halign="left",
             valign="top",
-            size_hint_y=None,
-            padding=(dp(8), dp(8)),
+            color=(0.88, 0.92, 0.98, 1),
         )
         self.lbl_eng.bind(width=lambda inst, w: setattr(inst, "text_size", (w, None)))
-        self.lbl_eng.bind(texture_size=lambda inst, ts: setattr(inst, "height", max(dp(180), ts[1] + dp(16))))
-        scroll.add_widget(self.lbl_eng)
-        box.add_widget(scroll)
+        self.lbl_eng.bind(texture_size=lambda inst, ts: setattr(inst, "height", max(ts[1] + 12, 180)))
+        self.scroll_eng.add_widget(self.lbl_eng)
+        box.add_widget(self.scroll_eng)
 
-        grid_btns = GridLayout(cols=2, spacing=dp(8), size_hint_y=0.56)
-        botoes_eng = [
-            ("LER FALHAS (DTC)", (0.12, 0.46, 0.78, 1), self.ler_dtcs),
-            ("APAGAR FALHAS", (0.82, 0.38, 0.12, 1), self.apagar_dtcs),
-            ("INFO ECU E ODOMETRO", (0.42, 0.24, 0.64, 1), self.ler_info_ecu),
-            ("BUSCAR MODULOS", (0.20, 0.48, 0.60, 1), self.buscar_modulos_kwp),
-            ("CAPTURAR CALIBRACAO\n(4 ESTADOS + MODO 01)", (0.08, 0.62, 0.58, 1), self.capturar_calibracao_ecu),
-            ("SALVAR BOLETIM TXT", (0.24, 0.42, 0.56, 1), self.salvar_boletim_txt),
-            ("VARRER ECU", (0.14, 0.58, 0.36, 1), self.iniciar_varredura_ecu),
-            ("PARAR VARREDURA", (0.76, 0.22, 0.22, 1), self.parar_varredura_ecu),
-        ]
-        for titulo, cor, callback in botoes_eng:
-            btn = Button(
-                text=titulo,
-                font_size="12sp",
-                bold=True,
-                halign="center",
-                background_normal="",
-                background_color=cor,
-            )
-            btn.bind(on_release=callback)
-            grid_btns.add_widget(btn)
+        linha_dtc = BoxLayout(size_hint_y=0.12, spacing=6)
+        b_ler_dtc = Button(text="LER FALHAS (DTC)", background_normal="", background_color=(0.14, 0.45, 0.78, 1), bold=True, font_size="12sp")
+        b_ler_dtc.bind(on_release=self.ler_dtcs)
+        b_apg_dtc = Button(text="APAGAR FALHAS", background_normal="", background_color=(0.80, 0.35, 0.12, 1), bold=True, font_size="12sp")
+        b_apg_dtc.bind(on_release=self.apagar_dtcs)
+        linha_dtc.add_widget(b_ler_dtc)
+        linha_dtc.add_widget(b_apg_dtc)
+        box.add_widget(linha_dtc)
 
-        box.add_widget(grid_btns)
-        scr.add_widget(box)
-        return scr
+        linha_info = BoxLayout(size_hint_y=0.12, spacing=6)
+        b_info = Button(text="INFO ECU / ODO", background_normal="", background_color=(0.35, 0.25, 0.65, 1), bold=True, font_size="12sp")
+        b_info.bind(on_release=self.ler_info_ecu)
+        b_modulos = Button(text="BUSCAR MODULOS", background_normal="", background_color=(0.20, 0.48, 0.62, 1), bold=True, font_size="12sp")
+        b_modulos.bind(on_release=self.buscar_modulos_kwp)
+        linha_info.add_widget(b_info)
+        linha_info.add_widget(b_modulos)
+        box.add_widget(linha_info)
+
+        linha_varrer = BoxLayout(size_hint_y=0.12, spacing=6)
+        b_varrer = Button(text="VARRER ECU", background_normal="", background_color=(0.15, 0.55, 0.40, 1), bold=True, font_size="12sp")
+        b_varrer.bind(on_release=self.iniciar_varredura_ecu)
+        b_parar_varrer = Button(text="PARAR VARREDURA", background_normal="", background_color=(0.75, 0.22, 0.22, 1), bold=True, font_size="12sp")
+        b_parar_varrer.bind(on_release=self.parar_varredura_ecu)
+        linha_varrer.add_widget(b_varrer)
+        linha_varrer.add_widget(b_parar_varrer)
+        box.add_widget(linha_varrer)
+
+        b_boletim = Button(
+            text="GERAR BOLETIM TECNICO (ULTIMO LOG)",
+            size_hint_y=0.12,
+            background_normal="",
+            background_color=(0.18, 0.46, 0.76, 1),
+            bold=True,
+            font_size="13sp",
+        )
+        b_boletim.bind(on_release=self.gerar_boletim_tecnico)
+        box.add_widget(b_boletim)
+
+        return box
 
 
 if __name__ == "__main__":
