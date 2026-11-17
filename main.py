@@ -82,24 +82,17 @@ class TR4ScannerApp(TR4EngineMixin, App):
         self.rodando = False
         self.varrendo = False
         self.modo_simulacao = False
-        self.estado_conexao = "DESCONECTADO"
-        self.cancelar_conexao = False
-        self._con_seq = 0
-
         self.gravando_log = False
         self.log_pausado = False
         self.linhas_gravadas_log = 0
+        self.etapa_calibracao = 0
         self.caminho_log_atual = ""
         self.arquivo_log = None
         self.writer_log = None
-
         self.bt_lock = threading.Lock()
         self.bt_socket = None
         self.bt_in = None
         self.bt_out = None
-        self.bt_salvo_addr = ""
-        self.bt_salvo_nome = ""
-        self._carregar_bt_salvo()
 
         self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
         self.valores_min = {}
@@ -121,54 +114,30 @@ class TR4ScannerApp(TR4EngineMixin, App):
         )
         raiz.add_widget(self.lbl_status)
 
-        barra_con = BoxLayout(size_hint_y=0.078, spacing=6)
+        barra_con = BoxLayout(size_hint_y=0.075, spacing=5)
+        btn_bt = Button(text="CONEXAO\nBLUETOOTH", background_normal="", background_color=(0.12, 0.45, 0.80, 1), font_size="11sp", bold=True, halign="center")
+        btn_bt.bind(on_release=self.conectar_bluetooth)
 
-        self.btn_bt_lista = Button(
-            text="ESCOLHER\nBLUETOOTH" if not self.bt_salvo_addr else "TROCAR\nBLUETOOTH",
-            size_hint_x=0.31,
-            background_normal="",
-            background_color=(0.12, 0.45, 0.80, 1),
-            font_size="11sp",
-            bold=True,
-            halign="center",
-        )
-        self.btn_bt_lista.bind(on_release=self.conectar_bluetooth)
+        btn_ecu = Button(text="CONECTAR\nECU", background_normal="", background_color=(0.14, 0.62, 0.35, 1), font_size="11sp", bold=True, halign="center")
+        btn_ecu.bind(on_release=self.conectar_ecu)
 
-        self.btn_acao_con = Button(
-            text="CONECTAR",
-            size_hint_x=0.43,
-            background_normal="",
-            background_color=(0.14, 0.62, 0.35, 1),
-            font_size="12sp",
-            bold=True,
-            halign="center",
-        )
-        self.btn_acao_con.bind(on_release=self.acao_botao_conexao)
+        btn_desc = Button(text="DESCONECTAR\nECU", background_normal="", background_color=(0.75, 0.22, 0.22, 1), font_size="11sp", bold=True, halign="center")
+        btn_desc.bind(on_release=self.desconectar_ecu)
 
-        self.btn_sim = Button(
-            text="SIMULACAO",
-            size_hint_x=0.26,
-            background_normal="",
-            background_color=(0.45, 0.30, 0.72, 1),
-            font_size="11sp",
-            bold=True,
-            halign="center",
-        )
-        self.btn_sim.bind(on_release=self.iniciar_simulacao)
+        btn_sim = Button(text="SIMULACAO", background_normal="", background_color=(0.45, 0.30, 0.72, 1), font_size="11sp", bold=True)
+        btn_sim.bind(on_release=self.iniciar_simulacao)
 
-        barra_con.add_widget(self.btn_bt_lista)
-        barra_con.add_widget(self.btn_acao_con)
-        barra_con.add_widget(self.btn_sim)
+        barra_con.add_widget(btn_bt)
+        barra_con.add_widget(btn_ecu)
+        barra_con.add_widget(btn_desc)
+        barra_con.add_widget(btn_sim)
         raiz.add_widget(barra_con)
-
-        self._atualizar_estado_conexao("DESCONECTADO")
 
         barra_abas = BoxLayout(size_hint_y=0.065, spacing=4)
         self.botoes_aba = {}
         for aba_id, aba_nome in [
             ("PAINEL", "PAINEL"),
-            ("SELETOR", "PIDS"),
-            ("GRAFICOS", "GRAFICO"),
+            ("SELETOR", "PIDS"),("GRAFICOS", "GRAFICO"),
             ("LOG", "LOG CSV"),
             ("ENGENHARIA", "ENG/DTC"),
         ]:
@@ -178,7 +147,7 @@ class TR4ScannerApp(TR4EngineMixin, App):
             barra_abas.add_widget(b)
         raiz.add_widget(barra_abas)
 
-        self.area_conteudo = BoxLayout(size_hint_y=0.802)
+        self.area_conteudo = BoxLayout(size_hint_y=0.805)
         raiz.add_widget(self.area_conteudo)
 
         self.telas = {
@@ -191,10 +160,6 @@ class TR4ScannerApp(TR4EngineMixin, App):
 
         self.trocar_aba("PAINEL")
         return raiz
-
-    def on_stop(self):
-        self._manter_tela_acesa(False)
-        self.desconectar_ecu()
 
     def trocar_aba(self, aba_id):
         self.area_conteudo.clear_widgets()
@@ -218,7 +183,7 @@ class TR4ScannerApp(TR4EngineMixin, App):
         box.add_widget(btn_zerar)
 
         scroll = ScrollView(size_hint_y=0.925)
-        self.grid_painel = GridLayout(cols=2, spacing=6, size_hint_y=None, padding=2)
+        self.grid_painel = GridLayout(cols=2, spacing=8, size_hint_y=None, padding=4)
         self.grid_painel.bind(minimum_height=self.grid_painel.setter("height"))
         scroll.add_widget(self.grid_painel)
         box.add_widget(scroll)
@@ -230,20 +195,49 @@ class TR4ScannerApp(TR4EngineMixin, App):
         for pid in PIDS_DB:
             if not self.selecionados.get(pid["id"], False):
                 continue
-            card = BoxLayout(orientation="vertical", size_hint_y=None, height=96, padding=6)
+            card = BoxLayout(orientation="vertical", size_hint_y=None, height=112, padding=(8, 6), spacing=2)
             with card.canvas.before:
                 Color(0.13, 0.15, 0.20, 1)
                 rect = Rectangle(pos=card.pos, size=card.size)
             card.bind(pos=lambda inst, val, r=rect: setattr(r, "pos", val))
             card.bind(size=lambda inst, val, r=rect: setattr(r, "size", val))
 
-            lbl_nome = Label(text=pid["nome"], size_hint_y=0.28, font_size="12sp", color=(0.75, 0.80, 0.88, 1), bold=True)
+            lbl_nome = Label(
+                text=pid["nome"],
+                size_hint_y=0.34,
+                font_size="13sp",
+                color=(0.82, 0.87, 0.94, 1),
+                bold=True,
+                halign="center",
+                valign="middle",
+            )
+            lbl_nome.bind(size=lbl_nome.setter("text_size"))
+
             val_atual = self.valores_atuais.get(pid["id"], "--")
-            txt_val = f"{val_atual} {pid['unidade']}" if val_atual != "--" else "--"
-            lbl_val = Label(text=txt_val, size_hint_y=0.46, font_size="22sp", bold=True, color=(0.30, 0.92, 0.55, 1))
+            unid = pid["unidade"]
+            txt_val = f"{val_atual} {unid}".strip() if val_atual != "--" else "--"
+            lbl_val = Label(
+                text=txt_val,
+                size_hint_y=0.40,
+                font_size="22sp",
+                bold=True,
+                color=(0.30, 0.92, 0.55, 1),
+                halign="center",
+                valign="middle",
+            )
+            lbl_val.bind(size=lbl_val.setter("text_size"))
+
             vmin = self.valores_min.get(pid["id"], "--")
             vmax = self.valores_max.get(pid["id"], "--")
-            lbl_mm = Label(text=f"MIN: {vmin}   |   MAX: {vmax}", size_hint_y=0.26, font_size="11sp", color=(0.60, 0.68, 0.78, 1))
+            lbl_mm = Label(
+                text=f"MIN: {vmin}   |   MAX: {vmax}",
+                size_hint_y=0.26,
+                font_size="12sp",
+                color=(0.65, 0.73, 0.84, 1),
+                halign="center",
+                valign="middle",
+            )
+            lbl_mm.bind(size=lbl_mm.setter("text_size"))
 
             card.add_widget(lbl_nome)
             card.add_widget(lbl_val)
@@ -253,7 +247,7 @@ class TR4ScannerApp(TR4EngineMixin, App):
 
     def _criar_tela_seletor(self):
         box = BoxLayout(orientation="vertical", spacing=6)
-        barra_presets = BoxLayout(size_hint_y=0.08, spacing=5)
+        barra_presets = BoxLayout(size_hint_y=0.08, spacing=6)
         b_rap = Button(text="PRESET RAPIDO", background_normal="", background_color=(0.15, 0.52, 0.70, 1), font_size="12sp", bold=True)
         b_rap.bind(on_release=lambda x: self._aplicar_preset("RAPIDO"))
         b_todos = Button(text="MARCAR TODOS", background_normal="", background_color=(0.20, 0.58, 0.35, 1), font_size="12sp", bold=True)
@@ -265,19 +259,19 @@ class TR4ScannerApp(TR4EngineMixin, App):
         barra_presets.add_widget(b_limpar)
         box.add_widget(barra_presets)
 
-        scroll = ScrollView(size_hint_y=0.92)
-        grid = GridLayout(cols=1, spacing=4, size_hint_y=None)
+        scroll = ScrollView(size_hint_y=0.92)grid = GridLayout(cols=1, spacing=6, size_hint_y=None, padding=(4, 4))
         grid.bind(minimum_height=grid.setter("height"))
         for pid in PIDS_DB:
+            sufixo = f" ({pid['unidade']})" if pid["unidade"] else ""
             tb = ToggleButton(
-                text=f"  {pid['nome']} ({pid['unidade']})",
+                text=f"  {pid['nome']}{sufixo}",
                 size_hint_y=None,
-                height=48,
+                height=54,
                 state="down" if self.selecionados[pid["id"]] else "normal",
                 font_size="14sp",
                 halign="left",
                 valign="middle",
-                padding=(14, 0),
+                padding=(16, 0),
             )
             tb.bind(size=tb.setter("text_size"))
             tb.bind(state=lambda inst, st, pid_id=pid["id"]: self._toggle_pid(pid_id, st))
@@ -307,10 +301,10 @@ class TR4ScannerApp(TR4EngineMixin, App):
         self.graficos_lista = [
             GraficoTempoReal("Rotacao (RPM)", "rpm", (0.25, 0.85, 1.0, 1), 0, 6000),
             GraficoTempoReal("Sonda Lambda Pre-Cat", "mV", (0.30, 0.95, 0.45, 1), 0, 1000),
-            GraficoTempoReal("Integrador Lambda (STFT)", "%", (1.0, 0.75, 0.20, 1), -30, 30),
-            GraficoTempoReal("Avanco de Ignicao", "graus", (0.95, 0.40, 0.55, 1), -15, 45),
+            GraficoTempoReal("Integrador Lambda (STFT)", "%", (1.0, 0.75, 0.20, 1), -25, 25),
+            GraficoTempoReal("Tempo Injecao Consolidado", "ms", (0.95, 0.40, 0.55, 1), 0, 16),
         ]
-        self.pids_graf = ["RPM", "LAMBDA_1", "STFT", "AVANCO"]
+        self.pids_graf = ["RPM", "LAMBDA_1", "STFT", "TI_EFETIVO"]
         for g in self.graficos_lista:
             box.add_widget(g)
         return box
@@ -327,11 +321,11 @@ class TR4ScannerApp(TR4EngineMixin, App):
         box.add_widget(self.lbl_log_info)
 
         barra_sel_log = BoxLayout(size_hint_y=0.075, spacing=5)
-        b_log_rap = Button(text="PIDS ESSENCIAIS", background_normal="", background_color=(0.15, 0.52, 0.70, 1), font_size="11sp", bold=True)
+        b_log_rap = Button(text="PIDS ESSENCIAIS", background_normal="", background_color=(0.15, 0.52, 0.70, 1), font_size="12sp", bold=True)
         b_log_rap.bind(on_release=lambda x: self._preset_log("RAPIDO"))
-        b_log_all = Button(text="TODOS OS PIDS", background_normal="", background_color=(0.20, 0.58, 0.35, 1), font_size="11sp", bold=True)
+        b_log_all = Button(text="TODOS OS PIDS", background_normal="", background_color=(0.20, 0.58, 0.35, 1), font_size="12sp", bold=True)
         b_log_all.bind(on_release=lambda x: self._preset_log("TODOS"))
-        b_log_clr = Button(text="LIMPAR SELECAO", background_normal="", background_color=(0.45, 0.30, 0.30, 1), font_size="11sp", bold=True)
+        b_log_clr = Button(text="LIMPAR SELECAO", background_normal="", background_color=(0.45, 0.30, 0.30, 1), font_size="12sp", bold=True)
         b_log_clr.bind(on_release=lambda x: self._preset_log("NENHUM"))
         barra_sel_log.add_widget(b_log_rap)
         barra_sel_log.add_widget(b_log_all)
@@ -339,18 +333,19 @@ class TR4ScannerApp(TR4EngineMixin, App):
         box.add_widget(barra_sel_log)
 
         scroll = ScrollView(size_hint_y=0.675)
-        grid = GridLayout(cols=1, spacing=4, size_hint_y=None)
+        grid = GridLayout(cols=1, spacing=5, size_hint_y=None, padding=(4, 4))
         grid.bind(minimum_height=grid.setter("height"))
         for pid in PIDS_DB:
+            sufixo = f" ({pid['unidade']})" if pid["unidade"] else ""
             tb = ToggleButton(
-                text=f"  {pid['nome']} ({pid['unidade']})",
+                text=f"  {pid['nome']}{sufixo}",
                 size_hint_y=None,
-                height=44,
+                height=48,
                 state="down" if self.selecionados_log[pid["id"]] else "normal",
-                font_size="13sp",
+                font_size="14sp",
                 halign="left",
                 valign="middle",
-                padding=(14, 0),
+                padding=(16, 0),
             )
             tb.bind(size=tb.setter("text_size"))
             tb.bind(state=lambda inst, st, pid_id=pid["id"]: self._toggle_pid_log(pid_id, st))
@@ -359,23 +354,18 @@ class TR4ScannerApp(TR4EngineMixin, App):
         scroll.add_widget(grid)
         box.add_widget(scroll)
 
-        barra_grav = BoxLayout(size_hint_y=0.11, spacing=5)
-        btn_ini = Button(text="INICIAR /\nCONTINUAR", background_normal="", background_color=(0.15, 0.65, 0.35, 1), bold=True, font_size="11sp", halign="center")
+        barra_grav = BoxLayout(size_hint_y=0.11, spacing=6)
+        btn_ini = Button(text="INICIAR /\nCONTINUAR", background_normal="", background_color=(0.15, 0.65, 0.35, 1), bold=True, font_size="12sp", halign="center")
         btn_ini.bind(on_release=self.iniciar_gravacao_log)
-        btn_pausar = Button(text="PAUSAR\nLOG", background_normal="", background_color=(0.82, 0.55, 0.12, 1), bold=True, font_size="11sp", halign="center")
+        btn_pausar = Button(text="PAUSAR\nLOG", background_normal="", background_color=(0.82, 0.55, 0.12, 1), bold=True, font_size="12sp", halign="center")
         btn_pausar.bind(on_release=self.pausar_gravacao_log)
-        btn_parar = Button(text="ENCERRAR\nE SALVAR", background_normal="", background_color=(0.78, 0.22, 0.22, 1), bold=True, font_size="11sp", halign="center")
+        btn_parar = Button(text="ENCERRAR\nE SALVAR", background_normal="", background_color=(0.78, 0.22, 0.22, 1), bold=True, font_size="12sp", halign="center")
         btn_parar.bind(on_release=self.parar_gravacao_log)
-        btn_bol = Button(text="GERAR\nBOLETIM", background_normal="", background_color=(0.22, 0.48, 0.78, 1), bold=True, font_size="11sp", halign="center")
-        btn_bol.bind(on_release=self.gerar_boletim_tecnico)
         barra_grav.add_widget(btn_ini)
         barra_grav.add_widget(btn_pausar)
         barra_grav.add_widget(btn_parar)
-        barra_grav.add_widget(btn_bol)
         box.add_widget(barra_grav)
-        return box
-
-    def _toggle_pid_log(self, pid_id, state):
+        return boxdef _toggle_pid_log(self, pid_id, state):
         self.selecionados_log[pid_id] = (state == "down")
 
     def _preset_log(self, tipo):
@@ -391,24 +381,19 @@ class TR4ScannerApp(TR4EngineMixin, App):
             self.checks_log_ui[pid_id].state = "down" if ativo else "normal"
 
     def _criar_tela_engenharia(self):
-        box = BoxLayout(orientation="vertical", spacing=8, padding=6)
-
-        self.scroll_eng = ScrollView(size_hint_y=0.52)
+        box = BoxLayout(orientation="vertical", spacing=7, padding=6)
         self.lbl_eng = Label(
             text="Diagnostico Avancado KWP2000 - ECU IAW 4AM\n\nSelecione uma operacao abaixo:",
-            size_hint_y=None,
+            size_hint_y=0.48,
             font_size="13sp",
-            markup=True,
             halign="left",
             valign="top",
-            color=(0.88, 0.92, 0.98, 1),
+            color=(0.85, 0.90, 0.96, 1),
         )
-        self.lbl_eng.bind(width=lambda inst, w: setattr(inst, "text_size", (w, None)))
-        self.lbl_eng.bind(texture_size=lambda inst, ts: setattr(inst, "height", max(ts[1] + 12, 180)))
-        self.scroll_eng.add_widget(self.lbl_eng)
-        box.add_widget(self.scroll_eng)
+        self.lbl_eng.bind(size=self.lbl_eng.setter("text_size"))
+        box.add_widget(self.lbl_eng)
 
-        linha_dtc = BoxLayout(size_hint_y=0.12, spacing=6)
+        linha_dtc = BoxLayout(size_hint_y=0.16, spacing=6)
         b_ler_dtc = Button(text="LER FALHAS (DTC)", background_normal="", background_color=(0.14, 0.45, 0.78, 1), bold=True, font_size="12sp")
         b_ler_dtc.bind(on_release=self.ler_dtcs)
         b_apg_dtc = Button(text="APAGAR FALHAS", background_normal="", background_color=(0.80, 0.35, 0.12, 1), bold=True, font_size="12sp")
@@ -417,35 +402,26 @@ class TR4ScannerApp(TR4EngineMixin, App):
         linha_dtc.add_widget(b_apg_dtc)
         box.add_widget(linha_dtc)
 
-        linha_info = BoxLayout(size_hint_y=0.12, spacing=6)
-        b_info = Button(text="INFO ECU / ODO", background_normal="", background_color=(0.35, 0.25, 0.65, 1), bold=True, font_size="12sp")
+        linha_info = BoxLayout(size_hint_y=0.18, spacing=6)
+        b_info = Button(text="INFO ECU E\nODOMETRO", background_normal="", background_color=(0.35, 0.25, 0.65, 1), bold=True, font_size="12sp", halign="center")
         b_info.bind(on_release=self.ler_info_ecu)
-        b_modulos = Button(text="BUSCAR MODULOS", background_normal="", background_color=(0.20, 0.48, 0.62, 1), bold=True, font_size="12sp")
-        b_modulos.bind(on_release=self.buscar_modulos_kwp)
+        b_cal = Button(text="CAPTURAR\nCALIBRACAO", background_normal="", background_color=(0.12, 0.58, 0.65, 1), bold=True, font_size="12sp", halign="center")
+        b_cal.bind(on_release=self.capturar_calibracao)
         linha_info.add_widget(b_info)
-        linha_info.add_widget(b_modulos)
+        linha_info.add_widget(b_cal)
         box.add_widget(linha_info)
 
-        linha_varrer = BoxLayout(size_hint_y=0.12, spacing=6)
-        b_varrer = Button(text="VARRER ECU", background_normal="", background_color=(0.15, 0.55, 0.40, 1), bold=True, font_size="12sp")
+        linha_varrer = BoxLayout(size_hint_y=0.18, spacing=5)
+        b_mod = Button(text="BUSCAR\nMODULOS", background_normal="", background_color=(0.24, 0.42, 0.62, 1), bold=True, font_size="11sp", halign="center")
+        b_mod.bind(on_release=self.buscar_modulos_kwp)
+        b_varrer = Button(text="VARRER\nECU", background_normal="", background_color=(0.15, 0.55, 0.40, 1), bold=True, font_size="11sp", halign="center")
         b_varrer.bind(on_release=self.iniciar_varredura_ecu)
-        b_parar_varrer = Button(text="PARAR VARREDURA", background_normal="", background_color=(0.75, 0.22, 0.22, 1), bold=True, font_size="12sp")
+        b_parar_varrer = Button(text="PARAR\nVARREDURA", background_normal="", background_color=(0.75, 0.22, 0.22, 1), bold=True, font_size="11sp", halign="center")
         b_parar_varrer.bind(on_release=self.parar_varredura_ecu)
+        linha_varrer.add_widget(b_mod)
         linha_varrer.add_widget(b_varrer)
         linha_varrer.add_widget(b_parar_varrer)
         box.add_widget(linha_varrer)
-
-        b_boletim = Button(
-            text="GERAR BOLETIM TECNICO (ULTIMO LOG)",
-            size_hint_y=0.12,
-            background_normal="",
-            background_color=(0.18, 0.46, 0.76, 1),
-            bold=True,
-            font_size="13sp",
-        )
-        b_boletim.bind(on_release=self.gerar_boletim_tecnico)
-        box.add_widget(b_boletim)
-
         return box
 
 
