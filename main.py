@@ -1,5 +1,6 @@
 # coding: utf-8
 import threading
+from operator import itemgetter
 from kivy.app import App
 from kivy.core.window import Window
 from kivy.metrics import dp
@@ -101,6 +102,8 @@ class GraficoRealtime(Widget):
                     coords.extend([px, py])
                 Color(*self.cor_linha)
                 Line(points=coords, width=dp(1.8))
+
+
 class TR4ScannerApp(App, TR4EngineMixin):
     def on_start(self):
         manter_tela_acesa()
@@ -253,6 +256,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
         self._reconstruir_cards_painel()
         scr.add_widget(box)
         return scr
+
     def _reconstruir_cards_painel(self):
         self.grid_painel.clear_widgets()
         self.cards_ui = {}
@@ -396,28 +400,32 @@ class TR4ScannerApp(App, TR4EngineMixin):
 
     def _criar_tela_grafico(self):
         scr = Screen(name="grafico")
-        box = BoxLayout(orientation="vertical", spacing=dp(6))
+        box = BoxLayout(orientation="vertical", spacing=dp(4))
 
         opcoes = [p["nome"] for p in PIDS_DB]
         self.mapa_spinner_pid = {p["nome"]: p["id"] for p in PIDS_DB}
-        self.pids_graf = ["RPM", "AVANCO"]
+        self.pids_graf = ["RPM", "AVANCO", "MAP"]
         self.graficos_lista = []
-        cores = [(0.22, 0.88, 0.48, 1), (0.95, 0.55, 0.22, 1)]
+        cores = [
+            (0.22, 0.88, 0.48, 1),
+            (0.95, 0.55, 0.22, 1),
+            (0.28, 0.72, 0.98, 1),
+        ]
 
-        for idx in range(2):
-            pid_ini = self.pids_graf[idx]
-            texto_ini = next((k for k, v in self.mapa_spinner_pid.items() if v == pid_ini), opcoes[0])
+        for idx in range(3):
+            pid_ini = itemgetter(idx)(self.pids_graf)
+            texto_ini = next((k for k, v in self.mapa_spinner_pid.items() if v == pid_ini), itemgetter(0)(opcoes))
             sp = Spinner(
                 text=texto_ini,
                 values=opcoes,
                 size_hint_y=None,
-                height=dp(38),
-                font_size="12sp",
+                height=dp(32),
+                font_size="11.5sp",
                 bold=True,
                 background_normal="",
                 background_color=(0.18, 0.24, 0.34, 1),
             )
-            graf = GraficoRealtime(cor_linha=cores[idx])
+            graf = GraficoRealtime(cor_linha=itemgetter(idx)(cores))
             sp.bind(text=lambda inst, txt, i=idx, g=graf: self._trocar_pid_grafico(i, txt, g))
             self.graficos_lista.append(graf)
             box.add_widget(sp)
@@ -425,6 +433,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
 
         scr.add_widget(box)
         return scr
+
     def _trocar_pid_grafico(self, idx, texto_sel, graf_widget):
         pid_id = self.mapa_spinner_pid.get(texto_sel)
         if pid_id:
@@ -576,7 +585,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
             padding=(dp(8), dp(8)),
         )
         self.lbl_boletim.bind(width=lambda inst, w: setattr(inst, "text_size", (w, None)))
-        self.lbl_boletim.bind(texture_size=lambda inst, ts: setattr(inst, "height", max(dp(260), ts[1] + dp(16))))
+        self.lbl_boletim.bind(texture_size=lambda inst, ts: setattr(inst, "height", max(dp(260), itemgetter(1)(ts) + dp(16))))
         scroll.add_widget(self.lbl_boletim)
         box.add_widget(scroll)
 
@@ -630,7 +639,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
             padding=(dp(8), dp(8)),
         )
         self.lbl_eng.bind(width=lambda inst, w: setattr(inst, "text_size", (w, None)))
-        self.lbl_eng.bind(texture_size=lambda inst, ts: setattr(inst, "height", max(dp(180), ts[1] + dp(16))))
+        self.lbl_eng.bind(texture_size=lambda inst, ts: setattr(inst, "height", max(dp(180), itemgetter(1)(ts) + dp(16))))
         scroll.add_widget(self.lbl_eng)
         box.add_widget(scroll)
 
