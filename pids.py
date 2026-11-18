@@ -49,6 +49,14 @@ def _calc_stft_a4(b):
     return round(((a - 156.0) / 156.0) * 100.0, 1)
 
 
+def _calc_ltft_2154(b):
+    # Candidato a auto-adaptativo multiplicativo (centro 1638 = 0x0666 -> testar apos reset DTC 14FF00)
+    v = _u16(b, 0)
+    if v is None or v == 0:
+        return None
+    return round(((v - 1638.0) / 1638.0) * 100.0, 1)
+
+
 def _calc_etanol(b):
     v = _u16(b, 0)
     if v is None:
@@ -94,10 +102,11 @@ def _calc_corr_ign(b):
     v = _s16(b, 0)
     if v is None:
         return None
-    deg = round(v * 0.1, 1)
+    deg = round(v * 0.125, 1)
     if deg < -25.0 or deg > 25.0:
         return None
     return deg
+
 PIDS_DB = [
     {
         "id": "RPM",
@@ -205,7 +214,7 @@ PIDS_DB = [
         "min": -15,
         "max": 55,
         "calc": _calc_avanco,
-        "sim": lambda t: round(9.8 + 1.5 * math.sin(t * 1.8), 1),
+        "sim": lambda t: round(-5.5 + 1.2 * math.sin(t * 1.8), 1),
     },
     {
         "id": "VBAT",
@@ -267,6 +276,7 @@ PIDS_DB = [
         "calc": lambda b: _calc_knock_ret_cil(b, 12),
         "sim": lambda t: 0.0,
     },
+
     {
         "id": "KNOCK_NOISE",
         "nome": "Ruido Base Knock (Janela)",
@@ -295,13 +305,13 @@ PIDS_DB = [
         "id": "LTFT",
         "nome": "Adaptativo Mistura (LTFT)",
         "unidade": "%",
-        "cmd": "2179",
+        "cmd": "2154",
         "rapido": False,
-        "conf": "ok",
+        "conf": "provavel",
         "min": -35,
         "max": 35,
-        "calc": _calc_trim_156_u8,
-        "sim": lambda t: 3.8,
+        "calc": _calc_ltft_2154,
+        "sim": lambda t: 0.0,
     },
     {
         "id": "ETANOL_REAL",
