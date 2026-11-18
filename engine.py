@@ -971,7 +971,7 @@ class TR4EngineMixin:
                 rec_tag = f" | [REC {mm:02d}:{ss:02d} | {qtd}L]"
                 if hasattr(self, "lbl_log_status_bar"):
                     self.lbl_log_status_bar.text = f"STATUS LOG: GRAVANDO ({mm:02d}:{ss:02d}  |  {qtd} linhas)"
-                                self.lbl_log_status_bar.color = (0.25, 0.95, 0.45, 1)
+                    self.lbl_log_status_bar.color = (0.25, 0.95, 0.45, 1)
 
         alerta = self.tel.get("alerta_critico_atual", "")
         if alerta and self.estado_conexao in ("CONECTADO", "SIMULACAO"):
