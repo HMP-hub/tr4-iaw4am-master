@@ -164,6 +164,7 @@ class TR4EngineMixin:
                 t["knock_pior_map"] = float(mp) if isinstance(mp, (int, float)) else 0.0
         else:
             t["knock_ativo_frame"] = False
+
         quente = isinstance(ect, (int, float)) and ect >= 75.0
         malha_fechada = (cl in (2.0, 4.0, 16.0)) or (quente and isinstance(rpm, (int, float)) and rpm > 650)
         if quente and malha_fechada:
@@ -329,6 +330,7 @@ class TR4EngineMixin:
         except Exception as e:
             if hasattr(self, "lbl_boletim"):
                 self.lbl_boletim.text = f"Erro ao salvar boletim: {e}"
+
     def _caminho_config_bt(self):
         base = "."
         try:
@@ -435,11 +437,25 @@ class TR4EngineMixin:
         except Exception:
             pass
 
+    def _tem_permissao_bt(self):
+        try:
+            from android.permissions import check_permission
+            return bool(check_permission("android.permission.BLUETOOTH_CONNECT"))
+        except Exception:
+            return True
+
     def conectar_bluetooth(self, *args):
         if getattr(self, "estado_conexao", "") == "CONECTANDO":
             self.cancelar_tentativa_conexao()
             return
-        self._pedir_permissoes_android()
+        if not self._tem_permissao_bt():
+            self._pedir_permissoes_android()
+            self._atualizar_status("PERMISSAO BLUETOOTH LIBERADA - ABRINDO LISTA...", (1.0, 0.78, 0.2, 1))
+            Clock.schedule_once(lambda dt: self._abrir_lista_bt_real(), 0.6)
+            return
+        self._abrir_lista_bt_real()
+
+    def _abrir_lista_bt_real(self):
         try:
             from jnius import autoclass
             BluetoothAdapter = autoclass("android.bluetooth.BluetoothAdapter")
@@ -455,11 +471,17 @@ class TR4EngineMixin:
         except Exception as e:
             err = str(e)
             if "BLUETOOTH_CONNECT" in err or "SecurityException" in err:
-                self._atualizar_status("ACEITE A PERMISSAO BLUETOOTH E CLIQUE DE NOVO", (1.0, 0.78, 0.2, 1))
+                self._pedir_permissoes_android()
+                self._atualizar_status("ACEITE A PERMISSAO BLUETOOTH E AGUARDE...", (1.0, 0.78, 0.2, 1))
             else:
                 self._atualizar_status(f"ERRO BT: {err[:42]}", (1.0, 0.35, 0.35, 1))
 
     def _abrir_seletor_bt(self, pareados):
+        if getattr(self, "_popup_bt", None):
+            try:
+                self._popup_bt.dismiss()
+            except Exception:
+                pass
         box = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(10))
         box.add_widget(
             Label(
@@ -472,7 +494,9 @@ class TR4EngineMixin:
         scroll = ScrollView(size_hint_y=0.78, bar_width=dp(6))
         lista = GridLayout(cols=1, spacing=dp(12), size_hint_y=None, padding=(dp(4), dp(6)))
         lista.bind(minimum_height=lista.setter("height"))
-        popup = Popup(title="Selecionar Scanner Bluetooth", content=box, size_hint=(0.95, 0.85))
+        popup = Popup(title="Selecionar Scanner Bluetooth", content=box, size_hint=(0.95, 0.85), auto_dismiss=False)
+        self._popup_bt = popup
+
         for dev in pareados:
             addr = str(dev.getAddress() or "").strip()
             nome = str(dev.getName() or "").strip() or addr or "Dispositivo Sem Nome"
@@ -488,8 +512,9 @@ class TR4EngineMixin:
                 background_normal="",
                 background_color=cor_btn,
             )
-            btn.bind(on_release=lambda inst, a=addr, n=nome, p=popup: self._ao_escolher_dispositivo_bt(a, n, p))
+            btn.bind(on_press=lambda inst, a=addr, n=nome, p=popup: self._ao_escolher_dispositivo_bt(a, n, p))
             lista.add_widget(btn)
+
         scroll.add_widget(lista)
         box.add_widget(scroll)
         btn_fechar = Button(
@@ -505,9 +530,11 @@ class TR4EngineMixin:
         popup.open()
 
     def _ao_escolher_dispositivo_bt(self, addr, nome, popup):
+        self._popup_bt = None
         popup.dismiss()
         self._salvar_bt_salvo(addr, nome)
-        self._iniciar_conexao_completa(addr, nome)
+        Clock.schedule_once(lambda dt: self._iniciar_conexao_completa(addr, nome), 0.15)
+
     def _iniciar_conexao_completa(self, addr, nome_dev):
         self._pedir_permissoes_android()
         if self.rodando or self.modo_simulacao:
@@ -753,6 +780,9 @@ class TR4EngineMixin:
             t_atual = time.time() - t0
             cache_comandos = {}
             gravando_ativo = self.gravando_log and not getattr(self, "log_pausado", False)
+            log_ativos = getattr(self, "selecionados_log", {}) if gravando_ativo else {}
+            ler_bg_agora = (ciclo % 5 == 1)
+
     def atualizar_interface(self, dt):
         if not hasattr(self, "tel"):
             self._init_telemetria_viagem()
@@ -767,7 +797,7 @@ class TR4EngineMixin:
 
         if hasattr(self, "graficos_lista") and hasattr(self, "pids_graf"):
             for idx, graf in enumerate(self.graficos_lista):
-                val = self.valores_atuais.get(self.pids_graf[idx])
+                val = self.valores_atuais.get(itemgetter(idx)(self.pids_graf))
                 if isinstance(val, (int, float)):
                     graf.adicionar_ponto(val)
 
@@ -844,11 +874,30 @@ class TR4EngineMixin:
             self.lbl_log_info.text = f"LOG ENCERRADO E SALVO ({qtd} linhas):\n{arq}"
 
     def _classificar_estado_calibracao(self, b_a2, b_a6):
-        rpm = ((b_a2[0] << 8) | b_a2[1]) if len(b_a2) >= 2 else 0
-        ect = (((b_a2[6] << 8) | b_a2[7]) - 40) if len(b_a2) >= 8 else 0
-        tps_raw = ((b_a2[8] << 8) | b_a2[9]) if len(b_a2) >= 10 else 0
+        if len(b_a2) >= 2:
+            r0, r1 = itemgetter(0, 1)(b_a2)
+            rpm = (r0 << 8) | r1
+        else:
+            rpm = 0
+
+        if len(b_a2) >= 8:
+            e0, e1 = itemgetter(6, 7)(b_a2)
+            ect = ((e0 << 8) | e1) - 40
+        else:
+            ect = 0
+
+        if len(b_a2) >= 10:
+            t0, t1 = itemgetter(8, 9)(b_a2)
+            tps_raw = (t0 << 8) | t1
+        else:
+            tps_raw = 0
         tps = max(0.0, ((tps_raw - 1.0) / 835.0) * 100.0)
-        vel = ((b_a6[2] << 8) | b_a6[3]) if len(b_a6) >= 4 else 0
+
+        if len(b_a6) >= 4:
+            v0, v1 = itemgetter(2, 3)(b_a6)
+            vel = (v0 << 8) | v1
+        else:
+            vel = 0
 
         if rpm == 0:
             cod = "E1_CHAVE_LIGADA_MOTOR_PARADO"
@@ -957,7 +1006,3 @@ class TR4EngineMixin:
         if self.modo_simulacao:
             self.lbl_eng.text = (
                 "Codigo Projeto ECU: CA130195\n\n"
-                "Numero HW: IAW4AMHWM44  (Ver: 00)\n\n"
-                "Numero SW: 0401BA83  (Ver: 0000)\n\n"
-                "Homologacao: 4AMMS  |  ISO: 0000000000\n\n"
-                "Data Programacao: 20/10/2009\n\n"
