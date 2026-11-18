@@ -1002,7 +1002,15 @@ class TR4EngineMixin:
             self.rodando = True
             self.loop_leitura()
 
-    def ler_info_ecu(self, *args):
+        def ler_info_ecu(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = (
                 "Codigo Projeto ECU: CA130195\n\n"
+                "Numero HW: IAW4AMHWM44  (Ver: 00)\n\n"
+                "Numero SW: 0401BA83  (Ver: 0000)\n\n"
+                "Homologacao: 4AMMS  |  ISO: 0000000000\n\n"
+                "Data Programacao: 20/10/2009\n\n"
+                "Reescritas Flash: 1  |  Odo Reescr: 0 km\n\n"
+                "Odometro Real ECU: 69.456 km"
+            )
+            return
