@@ -1002,7 +1002,7 @@ class TR4EngineMixin:
             self.rodando = True
             self.loop_leitura()
 
-        def ler_info_ecu(self, *args):
+       def ler_info_ecu(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = (
                 "Codigo Projeto ECU: CA130195\n\n"
@@ -1014,3 +1014,9 @@ class TR4EngineMixin:
                 "Odometro Real ECU: 69.456 km"
             )
             return
+        if not self.rodando or not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
+            return
+        self.rodando = False
+        self.lbl_eng.text = "Lendo identificacao completa e odometro da ECU..."
+        threading.Thread(target=self._ler_info_ecu_thread, daemon=True).start()
