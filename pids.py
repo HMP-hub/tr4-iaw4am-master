@@ -65,11 +65,11 @@ def _calc_temp(b, idx):
 
 
 def _calc_avanco(b):
-    # Bytes 14-15 de 21A0 (espelho de 2137): lenta -44 -> 9.6 deg | ventoinha -14 -> 12.6 deg | cruzeiro +143 -> 28.3 deg
+    # Bytes 14-15 de 21A0 (espelho de 2137): escala nativa Marelli 0.125 deg/bit (lenta -44 -> -5.5 deg ATDC)
     v = _s16(b, 14)
     if v is None:
         return None
-    deg = round((v * 0.1) + 14.0, 1)
+    deg = round(v * 0.125, 1)
     if deg < -15.0 or deg > 55.0:
         return None
     return deg
