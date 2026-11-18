@@ -402,7 +402,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
 
         opcoes = [p["nome"] for p in PIDS_DB]
         self.mapa_spinner_pid = {p["nome"]: p["id"] for p in PIDS_DB}
-        self.pids_graf = ["RPM", "AVANCO", "MAP"]
+        self.pids_graf = ["LAMBDA", "STFT", "MAP"]
         self.graficos_lista = []
         cores = [
             (0.22, 0.88, 0.48, 1),
