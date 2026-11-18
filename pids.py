@@ -1,7 +1,5 @@
 # coding: utf-8
 # Mapa de leitura da ECU Magneti Marelli IAW 4AM (Pajero TR4 2.0 16V Flex), KWP2000 modo 21.
-# "b" e a lista de bytes DEPOIS do cabecalho "61 xx".
-# Valores de 16 bits sao big-endian.
 import math
 
 
