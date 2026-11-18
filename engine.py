@@ -971,82 +971,7 @@ class TR4EngineMixin:
                 rec_tag = f" | [REC {mm:02d}:{ss:02d} | {qtd}L]"
                 if hasattr(self, "lbl_log_status_bar"):
                     self.lbl_log_status_bar.text = f"STATUS LOG: GRAVANDO ({mm:02d}:{ss:02d}  |  {qtd} linhas)"
-            if not self.rodando:
-                break
-
-            if not self.modo_simulacao:
-                if getattr(self, "_bt_io_erro", False):
-                    self.rodando = False
-                    Clock.schedule_once(lambda dt: self._tratar_perda_conexao("CONEXAO BLUETOOTH PERDIDA"))
-                    break
-
-                if comandos_tentados == 0:
-                    comandos_tentados = 1
-                    raw_hb = self.enviar_comando_raw("21A2", timeout=0.75)
-                    if self.parse_bytes_kwp(raw_hb, "21A2"):
-                        comandos_validos = 1
-
-                if comandos_validos == 0:
-                    ciclos_sem_resposta += 1
-                    if ciclos_sem_resposta >= 4:
-                        self.rodando = False
-                        Clock.schedule_once(
-                            lambda dt: self._tratar_perda_conexao("ECU DESCONECTADA (CHAVE DESLIGADA / SEM RESPOSTA)")
-                        )
-                        break
-                    time.sleep(0.15)
-                    continue
-                else:
-                    ciclos_sem_resposta = 0
-
-            self._processar_amostra_telemetria()
-
-            if gravando_ativo and self.writer_log and hasattr(self, "pids_gravando_lista"):
-                try:
-                    linha = [round(time.time() - self.inicio_log_ts, 2)] + [
-                        self.valores_atuais.get(pid_id, "") for pid_id in self.pids_gravando_lista
-                    ]
-                    self.writer_log.writerow(linha)
-                    self.arquivo_log.flush()
-                    self.linhas_gravadas_log = getattr(self, "linhas_gravadas_log", 0) + 1
-                except Exception:
-                    pass
-            Clock.schedule_once(self.atualizar_interface)
-            time.sleep(0.08 if self.modo_simulacao else 0.01)
-
-    def atualizar_interface(self, dt):
-        if not hasattr(self, "tel"):
-            self._init_telemetria_viagem()
-        for pid_id, widgets in self.cards_ui.items():
-            lbl_val, lbl_min, lbl_max, unidade = widgets
-            val = self.valores_atuais.get(pid_id, "--")
-            lbl_val.text = f"{val} {unidade}" if val != "--" else "--"
-            vmin = self.valores_min.get(pid_id, "--")
-            vmax = self.valores_max.get(pid_id, "--")
-            lbl_min.text = f"MIN: {vmin}"
-            lbl_max.text = f"MAX: {vmax}"
-
-        if hasattr(self, "graficos_lista") and hasattr(self, "pids_graf"):
-            for idx, graf in enumerate(self.graficos_lista):
-                val = self.valores_atuais.get(itemgetter(idx)(self.pids_graf))
-                if isinstance(val, (int, float)):
-                    graf.adicionar_ponto(val)
-
-        rec_tag = ""
-        if getattr(self, "gravando_log", False):
-            qtd = getattr(self, "linhas_gravadas_log", 0)
-            dur_log = max(0, int(time.time() - getattr(self, "inicio_log_ts", time.time())))
-            mm, ss = divmod(dur_log, 60)
-            if getattr(self, "log_pausado", False):
-                rec_tag = f" | LOG PAUSADO ({mm:02d}:{ss:02d})"
-                if hasattr(self, "lbl_log_status_bar"):
-                    self.lbl_log_status_bar.text = f"STATUS LOG: PAUSADO ({mm:02d}:{ss:02d}  |  {qtd} linhas)"
-                    self.lbl_log_status_bar.color = (1.0, 0.78, 0.2, 1)
-            else:
-                rec_tag = f" | [REC {mm:02d}:{ss:02d} | {qtd}L]"
-                if hasattr(self, "lbl_log_status_bar"):
-                    self.lbl_log_status_bar.text = f"STATUS LOG: GRAVANDO ({mm:02d}:{ss:02d}  |  {qtd} linhas)"
-                    self.lbl_log_status_bar.color = (0.25, 0.95, 0.45, 1)
+                                self.lbl_log_status_bar.color = (0.25, 0.95, 0.45, 1)
 
         alerta = self.tel.get("alerta_critico_atual", "")
         if alerta and self.estado_conexao in ("CONECTADO", "SIMULACAO"):
@@ -1055,6 +980,7 @@ class TR4EngineMixin:
             self._atualizar_status(f"ECU CONECTADA | K-LINE ATIVO{rec_tag}", (0.2, 0.95, 0.45, 1))
         elif self.estado_conexao == "SIMULACAO":
             self._atualizar_status(f"SIMULACAO ATIVA | IAW 4AM{rec_tag}", (0.3, 0.9, 0.5, 1))
+
     def _obter_pasta_gravacao(self):
         pasta_dl = "/sdcard/Download"
         try:
