@@ -1,5 +1,5 @@
 # coding: utf-8
-# Mapa de leitura da ECU Magneti Marelli IAW 4AM (Pajero TR4 2.0 16V Flex), KWP2000 modo 21.
+# Mapa calibrado da ECU Magneti Marelli IAW 4AM (Pajero TR4 2.0 16V Flex), KWP2000 modo 21.
 import math
 
 
@@ -34,8 +34,16 @@ def _calc_tps(b):
     return round(max(0.0, min(100.0, pct)), 1)
 
 
-def _calc_trim_156(b):
+def _calc_trim_156_u8(b):
     a = _u8(b, 0)
+    if a is None:
+        return None
+    return round(((a - 156.0) / 156.0) * 100.0, 1)
+
+
+def _calc_stft_a4(b):
+    # Byte 8 de 21A4 e espelho exato do byte 0 de 2147 (centro = 156)
+    a = _u8(b, 8)
     if a is None:
         return None
     return round(((a - 156.0) / 156.0) * 100.0, 1)
@@ -57,20 +65,22 @@ def _calc_temp(b, idx):
 
 
 def _calc_avanco(b):
-    v = _s16(b, 10)
+    # Bytes 14-15 de 21A0 (espelho de 2137): lenta -44 -> 9.6 deg | ventoinha -14 -> 12.6 deg | cruzeiro +143 -> 28.3 deg
+    v = _s16(b, 14)
     if v is None:
         return None
-    deg = round((v * 0.25) + 21.0, 1)
+    deg = round((v * 0.1) + 14.0, 1)
     if deg < -15.0 or deg > 55.0:
         return None
     return deg
 
 
-def _calc_knock_cilindro(b, idx):
+def _calc_knock_ret_cil(b, idx):
+    # Bytes 6..13 de 21A3: atraso de ignicao por detonacao individual por cilindro (0 sem carga, >0 sob detonacao)
     v = _u16(b, idx)
     if v is None:
         return None
-    return round((v / 1023.0) * 5.0, 2)
+    return round(-v * 0.25, 2)
 
 
 def _calc_knock_noise_v(b):
@@ -88,8 +98,6 @@ def _calc_corr_ign(b):
     if deg < -25.0 or deg > 25.0:
         return None
     return deg
-
-
 PIDS_DB = [
     {
         "id": "RPM",
@@ -167,12 +175,12 @@ PIDS_DB = [
         "id": "STFT",
         "nome": "Integrador Lambda (STFT)",
         "unidade": "%",
-        "cmd": "2147",
+        "cmd": "21A4",
         "rapido": True,
         "conf": "ok",
         "min": -35,
         "max": 35,
-        "calc": _calc_trim_156,
+        "calc": _calc_stft_a4,
         "sim": lambda t: round(3.8 * math.sin(t * 1.4), 1),
     },
     {
@@ -193,11 +201,11 @@ PIDS_DB = [
         "unidade": "graus",
         "cmd": "21A0",
         "rapido": True,
-        "conf": "provavel",
+        "conf": "ok",
         "min": -15,
         "max": 55,
         "calc": _calc_avanco,
-        "sim": lambda t: round(10.5 + 1.5 * math.sin(t * 1.8), 1),
+        "sim": lambda t: round(9.8 + 1.5 * math.sin(t * 1.8), 1),
     },
     {
         "id": "VBAT",
@@ -209,7 +217,55 @@ PIDS_DB = [
         "min": 9.0,
         "max": 16.0,
         "calc": lambda b: _num(_u16(b, 16), 0.1, 1),
-        "sim": lambda t: 13.9,
+        "sim": lambda t: 14.0,
+    },
+    {
+        "id": "KNOCK_CIL1",
+        "nome": "Atraso Knock Cilindro 1",
+        "unidade": "graus",
+        "cmd": "21A3",
+        "rapido": False,
+        "conf": "ok",
+        "min": -15.0,
+        "max": 0.0,
+        "calc": lambda b: _calc_knock_ret_cil(b, 6),
+        "sim": lambda t: 0.0,
+    },
+    {
+        "id": "KNOCK_CIL2",
+        "nome": "Atraso Knock Cilindro 2",
+        "unidade": "graus",
+        "cmd": "21A3",
+        "rapido": False,
+        "conf": "ok",
+        "min": -15.0,
+        "max": 0.0,
+        "calc": lambda b: _calc_knock_ret_cil(b, 8),
+        "sim": lambda t: 0.0,
+    },
+    {
+        "id": "KNOCK_CIL3",
+        "nome": "Atraso Knock Cilindro 3",
+        "unidade": "graus",
+        "cmd": "21A3",
+        "rapido": False,
+        "conf": "ok",
+        "min": -15.0,
+        "max": 0.0,
+        "calc": lambda b: _calc_knock_ret_cil(b, 10),
+        "sim": lambda t: 0.0,
+    },
+    {
+        "id": "KNOCK_CIL4",
+        "nome": "Atraso Knock Cilindro 4",
+        "unidade": "graus",
+        "cmd": "21A3",
+        "rapido": False,
+        "conf": "ok",
+        "min": -15.0,
+        "max": 0.0,
+        "calc": lambda b: _calc_knock_ret_cil(b, 12),
+        "sim": lambda t: 0.0,
     },
     {
         "id": "KNOCK_NOISE",
@@ -221,55 +277,7 @@ PIDS_DB = [
         "min": 0.0,
         "max": 5.0,
         "calc": _calc_knock_noise_v,
-        "sim": lambda t: round(1.15 + 0.10 * abs(math.sin(t * 2.5)), 2),
-    },
-    {
-        "id": "KNOCK_CIL1",
-        "nome": "Sinal Knock Cilindro 1",
-        "unidade": "V",
-        "cmd": "21A3",
-        "rapido": False,
-        "conf": "provavel",
-        "min": 0.0,
-        "max": 5.0,
-        "calc": lambda b: _calc_knock_cilindro(b, 14),
-        "sim": lambda t: round(0.25 + 0.05 * math.sin(t * 1.1), 2),
-    },
-    {
-        "id": "KNOCK_CIL2",
-        "nome": "Sinal Knock Cilindro 2",
-        "unidade": "V",
-        "cmd": "21A3",
-        "rapido": False,
-        "conf": "provavel",
-        "min": 0.0,
-        "max": 5.0,
-        "calc": lambda b: _calc_knock_cilindro(b, 16),
-        "sim": lambda t: round(0.26 + 0.05 * math.cos(t * 1.1), 2),
-    },
-    {
-        "id": "KNOCK_CIL3",
-        "nome": "Sinal Knock Cilindro 3",
-        "unidade": "V",
-        "cmd": "21A3",
-        "rapido": False,
-        "conf": "provavel",
-        "min": 0.0,
-        "max": 5.0,
-        "calc": lambda b: _calc_knock_cilindro(b, 18),
-        "sim": lambda t: round(0.24 + 0.05 * math.sin(t * 1.3), 2),
-    },
-    {
-        "id": "KNOCK_CIL4",
-        "nome": "Sinal Knock Cilindro 4",
-        "unidade": "V",
-        "cmd": "21A3",
-        "rapido": False,
-        "conf": "provavel",
-        "min": 0.0,
-        "max": 5.0,
-        "calc": lambda b: _calc_knock_cilindro(b, 20),
-        "sim": lambda t: round(0.25 + 0.05 * math.cos(t * 1.3), 2),
+        "sim": lambda t: round(0.95 + 0.10 * abs(math.sin(t * 2.5)), 2),
     },
     {
         "id": "CORR_IGN",
@@ -292,7 +300,7 @@ PIDS_DB = [
         "conf": "ok",
         "min": -35,
         "max": 35,
-        "calc": _calc_trim_156,
+        "calc": _calc_trim_156_u8,
         "sim": lambda t: 3.8,
     },
     {
@@ -329,7 +337,7 @@ PIDS_DB = [
         "min": -10,
         "max": 100,
         "calc": lambda b: _calc_temp(b, 4),
-        "sim": lambda t: round(46.0 + 1.5 * math.sin(t * 0.15), 0),
+        "sim": lambda t: round(36.0 + 1.5 * math.sin(t * 0.15), 0),
     },
     {
         "id": "IAC",
@@ -341,7 +349,7 @@ PIDS_DB = [
         "min": 0,
         "max": 200,
         "calc": lambda b: _num(_u16(b, 14), 1, 0),
-        "sim": lambda t: 72.0,
+        "sim": lambda t: 70.0,
     },
     {
         "id": "RPM_ALVO",
@@ -365,7 +373,7 @@ PIDS_DB = [
         "min": 70,
         "max": 105,
         "calc": lambda b: _num(_u16(b, 0), 0.1, 1),
-        "sim": lambda t: 96.7,
+        "sim": lambda t: 98.5,
     },
     {
         "id": "CARGA",
@@ -419,12 +427,12 @@ PIDS_DB = [
         "id": "MOVIMENTO",
         "nome": "Veiculo em Movimento (0/1)",
         "unidade": "Ativo",
-        "cmd": "2159",
+        "cmd": "21A6",
         "rapido": False,
         "conf": "ok",
         "min": 0,
         "max": 1,
-        "calc": lambda b: float(_u8(b, 0) or 0),
+        "calc": lambda b: 1.0 if (_u8(b, 5) or 0) > 0 else 0.0,
         "sim": lambda t: 1.0,
     },
     {
@@ -441,14 +449,14 @@ PIDS_DB = [
     },
     {
         "id": "FAN_STATUS",
-        "nome": "Eletroventilador (Status)",
-        "unidade": "Code",
+        "nome": "Eletroventilador (0=Off 1=On)",
+        "unidade": "Ativo",
         "cmd": "21A6",
         "rapido": False,
-        "conf": "provavel",
+        "conf": "ok",
         "min": 0,
-        "max": 10,
-        "calc": lambda b: float(_u8(b, 8) or 0),
-        "sim": lambda t: 1.0,
+        "max": 1,
+        "calc": lambda b: 1.0 if (_u8(b, 8) or 0) >= 8 else 0.0,
+        "sim": lambda t: 0.0,
     },
 ]
