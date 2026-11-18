@@ -13,30 +13,29 @@ from kivy.uix.label import Label
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.spinner import Spinner
 from kivy.uix.widget import Widget
-from kivy.utils import platform
 
 from pids import PIDS_DB
 from engine import TR4EngineMixin
 
 Window.clearcolor = (0.08, 0.09, 0.11, 1)
 
-# Ativação do WakeLock para manter a tela sempre acesa no Android
-if platform == 'android':
+
+def manter_tela_acesa():
     try:
         from jnius import autoclass
-        PythonActivity = autoclass('org.kivy.android.PythonActivity')
-        WindowManager = autoclass('android.view.WindowManager$LayoutParams')
+        from android.runnable import run_on_ui_thread
+
+        @run_on_ui_thread
+        def _set_flag():
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            WindowManagerParams = autoclass("android.view.WindowManager$LayoutParams")
+            activity = PythonActivity.mActivity
+            if activity:
+                activity.getWindow().addFlags(WindowManagerParams.FLAG_KEEP_SCREEN_ON)
+
+        _set_flag()
     except Exception:
         pass
-
-def keep_screen_on():
-    if platform == 'android':
-        try:
-            activity = PythonActivity.mActivity
-            window = activity.getWindow()
-            window.addFlags(WindowManager.FLAG_KEEP_SCREEN_ON)
-        except Exception as e:
-            print(f"Erro ao ativar WakeLock: {e}")
 
 
 class GraficoRealtime(Widget):
@@ -47,7 +46,7 @@ class GraficoRealtime(Widget):
         self.pontos = []
         self.lbl_info = Label(
             text="--",
-            font_size="11sp",
+            font_size="12sp",
             bold=True,
             color=(0.95, 0.95, 0.95, 1),
             halign="left",
@@ -57,8 +56,8 @@ class GraficoRealtime(Widget):
         self.bind(pos=self._reposicionar, size=self._reposicionar)
 
     def _reposicionar(self, *args):
-        self.lbl_info.pos = (self.x + dp(8), self.top - dp(20))
-        self.lbl_info.size = (self.width - dp(16), dp(18))
+        self.lbl_info.pos = (self.x + dp(8), self.top - dp(24))
+        self.lbl_info.size = (self.width - dp(16), dp(20))
         self.lbl_info.text_size = self.lbl_info.size
         self._desenhar()
 
@@ -73,7 +72,7 @@ class GraficoRealtime(Widget):
             self.pontos.pop(0)
         vmin = min(self.pontos)
         vmax = max(self.pontos)
-        self.lbl_info.text = f"Atual: {val} | Min: {vmin} | Max: {vmax}"
+        self.lbl_info.text = f"Atual: {val}   |   Min: {vmin}   |   Max: {vmax}"
         self._desenhar()
 
     def _desenhar(self):
@@ -91,8 +90,8 @@ class GraficoRealtime(Widget):
                 vmax = max(self.pontos)
                 if vmax - vmin < 1e-6:
                     vmax = vmin + 1.0
-                pad_y = dp(8)
-                altura_util = max(dp(10), self.height - dp(26))
+                pad_y = dp(10)
+                altura_util = max(dp(10), self.height - dp(32))
                 passo_x = self.width / max(1, self.max_pontos - 1)
                 coords = []
                 for idx, v in enumerate(self.pontos):
@@ -102,11 +101,16 @@ class GraficoRealtime(Widget):
                     coords.extend([px, py])
                 Color(*self.cor_linha)
                 Line(points=coords, width=dp(1.8))
-
-
 class TR4ScannerApp(App, TR4EngineMixin):
+    def on_start(self):
+        manter_tela_acesa()
+
+    def on_resume(self):
+        manter_tela_acesa()
+        return True
+
     def build(self):
-        keep_screen_on()
+        manter_tela_acesa()
         self.title = "TR4 IAW4AM Master"
         self.bt_lock = threading.Lock()
         self.bt_socket = None
@@ -187,7 +191,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
         abas_def = [
             ("painel", "PAINEL"),
             ("pids", "PIDS"),
-            ("grafico", "GRAFICO (3)"),
+            ("grafico", "GRAFICO"),
             ("log", "LOG CSV"),
             ("boletim", "BOLETIM"),
             ("eng", "ENG/DTC"),
@@ -249,7 +253,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
         self._reconstruir_cards_painel()
         scr.add_widget(box)
         return scr
-
     def _reconstruir_cards_painel(self):
         self.grid_painel.clear_widgets()
         self.cards_ui = {}
@@ -357,7 +360,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
             self.checks_pids[pid_id] = chk
 
             lbl = Label(
-                text=f"[{p['cmd']}] {p['nome']} ({p['unidade']})",
+                text=f"{p['nome']} ({p['unidade']})",
                 font_size="12sp",
                 halign="left",
                 valign="middle",
@@ -391,30 +394,25 @@ class TR4ScannerApp(App, TR4EngineMixin):
                 self.checks_pids[pid_id].active = novo
         self._reconstruir_cards_painel()
 
-    # Aba de Gráficos atualizada para 3 canais simultâneos
     def _criar_tela_grafico(self):
         scr = Screen(name="grafico")
-        box = BoxLayout(orientation="vertical", spacing=dp(4))
+        box = BoxLayout(orientation="vertical", spacing=dp(6))
 
-        opcoes = [f"{p['id']} - {p['nome']}" for p in PIDS_DB]
-        self.mapa_spinner_pid = {f"{p['id']} - {p['nome']}": p["id"] for p in PIDS_DB}
-        self.pids_graf = ["RPM", "KNOCK_SENSOR", "MAP"]
+        opcoes = [p["nome"] for p in PIDS_DB]
+        self.mapa_spinner_pid = {p["nome"]: p["id"] for p in PIDS_DB}
+        self.pids_graf = ["RPM", "AVANCO"]
         self.graficos_lista = []
-        cores = [
-            (0.22, 0.88, 0.48, 1),
-            (0.95, 0.55, 0.22, 1),
-            (0.35, 0.65, 0.95, 1)
-        ]
+        cores = [(0.22, 0.88, 0.48, 1), (0.95, 0.55, 0.22, 1)]
 
-        for idx in range(3):
+        for idx in range(2):
             pid_ini = self.pids_graf[idx]
             texto_ini = next((k for k, v in self.mapa_spinner_pid.items() if v == pid_ini), opcoes[0])
             sp = Spinner(
                 text=texto_ini,
                 values=opcoes,
                 size_hint_y=None,
-                height=dp(32),
-                font_size="11sp",
+                height=dp(38),
+                font_size="12sp",
                 bold=True,
                 background_normal="",
                 background_color=(0.18, 0.24, 0.34, 1),
@@ -427,7 +425,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
 
         scr.add_widget(box)
         return scr
-
     def _trocar_pid_grafico(self, idx, texto_sel, graf_widget):
         pid_id = self.mapa_spinner_pid.get(texto_sel)
         if pid_id:
@@ -537,7 +534,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
             self.checks_log[pid_id] = chk
 
             lbl = Label(
-                text=f"{p['id']} - {p['nome']}",
+                text=f"{p['nome']} ({p['unidade']})",
                 font_size="12sp",
                 halign="left",
                 valign="middle",
