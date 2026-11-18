@@ -111,7 +111,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
     def on_resume(self):
         manter_tela_acesa()
         return True
-
     def build(self):
         manter_tela_acesa()
         self.title = "TR4 IAW4AM Master"
@@ -256,7 +255,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
         self._reconstruir_cards_painel()
         scr.add_widget(box)
         return scr
-
     def _reconstruir_cards_painel(self):
         self.grid_painel.clear_widgets()
         self.cards_ui = {}
@@ -433,7 +431,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
 
         scr.add_widget(box)
         return scr
-
     def _trocar_pid_grafico(self, idx, texto_sel, graf_widget):
         pid_id = self.mapa_spinner_pid.get(texto_sel)
         if pid_id:
@@ -448,11 +445,21 @@ class TR4ScannerApp(App, TR4EngineMixin):
         scr = Screen(name="log")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
 
+        self.lbl_log_status_bar = Label(
+            text="STATUS LOG: PARADO (00:00  |  0 linhas)",
+            size_hint_y=None,
+            height=dp(28),
+            font_size="12.5sp",
+            bold=True,
+            color=(0.75, 0.80, 0.88, 1),
+        )
+        box.add_widget(self.lbl_log_status_bar)
+
         self.lbl_log_info = Label(
             text="Selecione os PIDs abaixo e clique em INICIAR LOG CSV.\nOs arquivos sao salvos em /sdcard/Download.",
             size_hint_y=None,
-            height=dp(52),
-            font_size="12sp",
+            height=dp(48),
+            font_size="11.5sp",
             halign="left",
             valign="middle",
         )
