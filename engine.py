@@ -1300,10 +1300,17 @@ class TR4EngineMixin:
         self.rodando = False
         threading.Thread(target=self._apagar_dtcs_thread, daemon=True).start()
 
-    def _apagar_dtcs_thread(self):
+        def _apagar_dtcs_thread(self):
         time.sleep(0.25)
         resp = self.enviar_comando_raw("14FF00", timeout=2.0)
-        msg = "Falhas apagadas com sucesso!" if "54" in resp.upper() else f"Comando enviado ({resp})"
+        if "54" in resp.upper():
+            msg = (
+                "Falhas (DTC) apagadas e parametros\n"
+                "auto-adaptativos (A/F e lenta) resetados!\n\n"
+                "Rode ~10 min para a ECU reaprender a mistura."
+            )
+        else:
+            msg = f"Comando enviado ({resp})"
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", msg))
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
