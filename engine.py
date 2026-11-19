@@ -1291,7 +1291,7 @@ class TR4EngineMixin:
             self.rodando = True
             self.loop_leitura()
             
-        def apagar_dtcs(self, *args):
+    def apagar_dtcs(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = "Simulacao: Falhas apagadas e aprendizado resetado!"
             return
