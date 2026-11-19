@@ -1290,17 +1290,72 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
-    def apagar_dtcs(self, *args):
+            
+        def apagar_dtcs(self, *args):
         if self.modo_simulacao:
-            self.lbl_eng.text = "Memoria de falhas limpa!"
+            self.lbl_eng.text = "Simulacao: Falhas apagadas e aprendizado resetado!"
             return
         if not self.rodando or not self.bt_out or not self.bt_in:
             self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
             return
+
+        box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12))
+        lbl_aviso = Label(
+            text=(
+                "ATENCAO:\n\n"
+                "Este comando apaga os codigos de falha (DTC) e "
+                "tambem ZERA os parametros auto-adaptativos "
+                "(aprendizado de combustivel A/F e marcha lenta) da ECU.\n\n"
+                "Deseja continuar?"
+            ),
+            font_size="13.5sp",
+            halign="center",
+            valign="middle",
+        )
+        lbl_aviso.bind(size=lambda inst, v: setattr(inst, "text_size", v))
+        box.add_widget(lbl_aviso)
+
+        botoes = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(10))
+        popup = Popup(
+            title="Confirmar Reset da ECU",
+            content=box,
+            size_hint=(0.90, 0.48),
+            auto_dismiss=False,
+        )
+
+        btn_nao = Button(
+            text="CANCELAR",
+            font_size="13sp",
+            bold=True,
+            background_normal="",
+            background_color=(0.35, 0.38, 0.44, 1),
+        )
+        btn_nao.bind(on_release=popup.dismiss)
+
+        btn_sim = Button(
+            text="CONFIRMAR RESET",
+            font_size="13sp",
+            bold=True,
+            background_normal="",
+            background_color=(0.82, 0.32, 0.14, 1),
+        )
+        btn_sim.bind(on_release=lambda *a: self._confirmar_apagar_dtcs(popup))
+
+        botoes.add_widget(btn_nao)
+        botoes.add_widget(btn_sim)
+        box.add_widget(botoes)
+        popup.open()
+
+    def _confirmar_apagar_dtcs(self, popup):
+        try:
+            popup.dismiss()
+        except Exception:
+            pass
         self.rodando = False
+        self.lbl_eng.text = "Apagando falhas e resetando parametros auto-adaptativos..."
         threading.Thread(target=self._apagar_dtcs_thread, daemon=True).start()
 
-        def _apagar_dtcs_thread(self):
+    def _apagar_dtcs_thread(self):
         time.sleep(0.25)
         resp = self.enviar_comando_raw("14FF00", timeout=2.0)
         if "54" in resp.upper():
