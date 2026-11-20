@@ -2,6 +2,7 @@
 import threading
 from operator import itemgetter
 from kivy.app import App
+from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.metrics import dp
 from kivy.graphics import Color, Line, Rectangle
@@ -37,6 +38,41 @@ def manter_tela_acesa():
         _set_flag()
     except Exception:
         pass
+
+
+class CardPID(BoxLayout):
+    def __init__(self, pid_id, on_long_press, **kwargs):
+        super().__init__(**kwargs)
+        self.pid_id = pid_id
+        self.on_long_press = on_long_press
+        self._lp_event = None
+        self._touch_ini = (0, 0)
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            self._touch_ini = touch.pos
+            self._lp_event = Clock.schedule_once(lambda dt: self._disparar_lp(), 0.55)
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self._lp_event:
+            dx = abs(touch.x - self._touch_ini[0])
+            dy = abs(touch.y - self._touch_ini[1])
+            if dx > dp(14) or dy > dp(14):
+                self._lp_event.cancel()
+                self._lp_event = None
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self._lp_event:
+            self._lp_event.cancel()
+            self._lp_event = None
+        return super().on_touch_up(touch)
+
+    def _disparar_lp(self):
+        self._lp_event = None
+        if self.on_long_press:
+            self.on_long_press(self.pid_id)
 
 
 class GraficoRealtime(Widget):
@@ -103,7 +139,6 @@ class GraficoRealtime(Widget):
                 Color(*self.cor_linha)
                 Line(points=coords, width=dp(1.8))
 
-
 class TR4ScannerApp(App, TR4EngineMixin):
     def on_start(self):
         manter_tela_acesa()
@@ -111,6 +146,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
     def on_resume(self):
         manter_tela_acesa()
         return True
+
     def build(self):
         manter_tela_acesa()
         self.title = "TR4 IAW4AM Master"
@@ -135,12 +171,20 @@ class TR4ScannerApp(App, TR4EngineMixin):
         self.valores_max = {}
         self.selecionados = {p["id"]: p["rapido"] for p in PIDS_DB}
         self.selecionados_log = {p["id"]: p["rapido"] for p in PIDS_DB}
+        self.ordem_pids = [p["id"] for p in PIDS_DB]
         self.cards_ui = {}
 
         self._carregar_bt_salvo()
+        self._carregar_ordem_pids()
         self._init_telemetria_viagem()
 
-        root = BoxLayout(orientation="vertical", padding=dp(6), spacing=dp(6))
+        root = BoxLayout(orientation="vertical", padding=dp(7), spacing=dp(6))
+        self.root_box = root
+
+        with root.canvas.after:
+            self._cor_borda_alerta = Color(1.0, 0.12, 0.12, 0.0)
+            self._linha_borda_alerta = Line(rectangle=(0, 0, 100, 100), width=dp(4.5))
+        root.bind(pos=self._atualizar_retangulo_borda, size=self._atualizar_retangulo_borda)
 
         self.lbl_status = Label(
             text="DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)",
@@ -151,6 +195,29 @@ class TR4ScannerApp(App, TR4EngineMixin):
             color=(1, 0.78, 0.2, 1),
         )
         root.add_widget(self.lbl_status)
+
+        self.lbl_banner_alerta = Label(
+            text="",
+            size_hint_y=None,
+            height=0,
+            opacity=0,
+            font_size="13sp",
+            bold=True,
+            color=(1, 1, 1, 1),
+            halign="center",
+            valign="middle",
+        )
+        with self.lbl_banner_alerta.canvas.before:
+            Color(0.85, 0.10, 0.10, 1)
+            self._bg_banner_alerta = Rectangle(pos=self.lbl_banner_alerta.pos, size=self.lbl_banner_alerta.size)
+        self.lbl_banner_alerta.bind(
+            pos=lambda inst, v: setattr(self._bg_banner_alerta, "pos", v),
+            size=lambda inst, v: (
+                setattr(self._bg_banner_alerta, "size", v),
+                setattr(inst, "text_size", v),
+            ),
+        )
+        root.add_widget(self.lbl_banner_alerta)
 
         barra_con = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(6))
         self.btn_bt_lista = Button(
@@ -223,6 +290,16 @@ class TR4ScannerApp(App, TR4EngineMixin):
         self.trocar_aba("painel")
         return root
 
+    def _atualizar_retangulo_borda(self, inst, *args):
+        if hasattr(self, "_linha_borda_alerta"):
+            pad = dp(2.5)
+            self._linha_borda_alerta.rectangle = (
+                inst.x + pad,
+                inst.y + pad,
+                max(10, inst.width - pad * 2),
+                max(10, inst.height - pad * 2),
+            )
+
     def trocar_aba(self, nome_scr):
         self.sm.current = nome_scr
         for k, btn in self.btns_abas.items():
@@ -234,17 +311,28 @@ class TR4ScannerApp(App, TR4EngineMixin):
         scr = Screen(name="painel")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
 
+        barra_p = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(6))
         btn_zerar = Button(
             text="ZERAR MIN / MAX",
-            size_hint_y=None,
-            height=dp(36),
-            font_size="12sp",
+            font_size="11.5sp",
             bold=True,
             background_normal="",
             background_color=(0.24, 0.28, 0.36, 1),
         )
         btn_zerar.bind(on_release=self.zerar_min_max)
-        box.add_widget(btn_zerar)
+
+        btn_ord_pad = Button(
+            text="ORDEM PADRAO",
+            font_size="11.5sp",
+            bold=True,
+            background_normal="",
+            background_color=(0.20, 0.34, 0.46, 1),
+        )
+        btn_ord_pad.bind(on_release=self.restaurar_ordem_padrao)
+
+        barra_p.add_widget(btn_zerar)
+        barra_p.add_widget(btn_ord_pad)
+        box.add_widget(barra_p)
 
         scroll = ScrollView(bar_width=dp(5))
         self.grid_painel = GridLayout(cols=2, spacing=dp(8), size_hint_y=None, padding=(dp(2), dp(2)))
@@ -255,14 +343,23 @@ class TR4ScannerApp(App, TR4EngineMixin):
         self._reconstruir_cards_painel()
         scr.add_widget(box)
         return scr
+
     def _reconstruir_cards_painel(self):
         self.grid_painel.clear_widgets()
         self.cards_ui = {}
+        mapa_pids = {p["id"]: p for p in PIDS_DB}
+        ids_ordenados = [pid_id for pid_id in self.ordem_pids if pid_id in mapa_pids]
         for p in PIDS_DB:
-            pid_id = p["id"]
+            if p["id"] not in ids_ordenados:
+                ids_ordenados.append(p["id"])
+
+        for pid_id in ids_ordenados:
             if not self.selecionados.get(pid_id, False):
                 continue
-            card = BoxLayout(
+            p = mapa_pids[pid_id]
+            card = CardPID(
+                pid_id=pid_id,
+                on_long_press=self.abrir_menu_ordem_card,
                 orientation="vertical",
                 size_hint_y=None,
                 height=dp(106),
@@ -286,8 +383,10 @@ class TR4ScannerApp(App, TR4EngineMixin):
             )
             lbl_nome.bind(size=lambda inst, v: setattr(inst, "text_size", v))
 
+            val_atual = self.valores_atuais.get(pid_id, "--")
+            txt_val = f"{val_atual} {p['unidade']}" if val_atual != "--" else "--"
             lbl_val = Label(
-                text="--",
+                text=txt_val,
                 font_size="21sp",
                 bold=True,
                 color=(0.25, 0.92, 0.55, 1),
@@ -298,8 +397,10 @@ class TR4ScannerApp(App, TR4EngineMixin):
             lbl_val.bind(size=lambda inst, v: setattr(inst, "text_size", v))
 
             rodape = BoxLayout(size_hint_y=0.24)
-            lbl_min = Label(text="MIN: --", font_size="10sp", color=(0.55, 0.75, 0.95, 1), halign="left")
-            lbl_max = Label(text="MAX: --", font_size="10sp", color=(0.95, 0.65, 0.45, 1), halign="right")
+            vmin = self.valores_min.get(pid_id, "--")
+            vmax = self.valores_max.get(pid_id, "--")
+            lbl_min = Label(text=f"MIN: {vmin}", font_size="10sp", color=(0.55, 0.75, 0.95, 1), halign="left")
+            lbl_max = Label(text=f"MAX: {vmax}", font_size="10sp", color=(0.95, 0.65, 0.45, 1), halign="right")
             rodape.add_widget(lbl_min)
             rodape.add_widget(lbl_max)
 
@@ -431,6 +532,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
 
         scr.add_widget(box)
         return scr
+
     def _trocar_pid_grafico(self, idx, texto_sel, graf_widget):
         pid_id = self.mapa_spinner_pid.get(texto_sel)
         if pid_id:
