@@ -41,24 +41,62 @@ def manter_tela_acesa():
 
 
 class CardPID(BoxLayout):
-    def __init__(self, pid_id, on_long_press, **kwargs):
+    def __init__(self, pid_id, app_ref, **kwargs):
         super().__init__(**kwargs)
         self.pid_id = pid_id
-        self.on_long_press = on_long_press
+        self.app_ref = app_ref
         self._lp_event = None
         self._touch_ini = (0, 0)
+        self._arrastando = False
+        self._ghost = None
+        self._offset = (0, 0)
 
     def on_touch_down(self, touch):
         if self.collide_point(*touch.pos):
             self._touch_ini = touch.pos
-            self._lp_event = Clock.schedule_once(lambda dt: self._disparar_lp(), 0.55)
+            self._lp_event = Clock.schedule_once(lambda dt: self._iniciar_drag(touch), 0.35)
         return super().on_touch_down(touch)
 
+    def _iniciar_drag(self, touch):
+        self._lp_event = None
+        if self.app_ref.sm.current != "painel":
+            return
+        self._arrastando = True
+        touch.grab(self)
+        self.app_ref.scroll_painel.do_scroll_y = False
+        win_x, win_y = self.to_window(*self.pos)
+        self._offset = (touch.x - win_x, touch.y - win_y)
+
+        self._ghost = BoxLayout(size_hint=(None, None), size=self.size, pos=(win_x, win_y))
+        with self._ghost.canvas.before:
+            Color(0.16, 0.48, 0.82, 0.90)
+            Rectangle(pos=self._ghost.pos, size=self._ghost.size)
+        self._ghost.bind(
+            pos=lambda inst, v: self._atualizar_ghost_canvas(),
+            size=lambda inst, v: self._atualizar_ghost_canvas(),
+        )
+        lbl_g = Label(text=self.children[-1].text, font_size="14sp", bold=True, color=(1, 1, 1, 1))
+        self._ghost.add_widget(lbl_g)
+        Window.add_widget(self._ghost)
+        self.opacity = 0.25
+
+    def _atualizar_ghost_canvas(self):
+        if self._ghost:
+            self._ghost.canvas.before.clear()
+            with self._ghost.canvas.before:
+                Color(0.16, 0.48, 0.82, 0.90)
+                Rectangle(pos=self._ghost.pos, size=self._ghost.size)
+
     def on_touch_move(self, touch):
+        if self._arrastando and touch.grab_current is self:
+            if self._ghost:
+                self._ghost.pos = (touch.x - self._offset[0], touch.y - self._offset[1])
+            self.app_ref._processar_movimento_drag(self.pid_id, touch.pos)
+            return True
         if self._lp_event:
             dx = abs(touch.x - self._touch_ini[0])
             dy = abs(touch.y - self._touch_ini[1])
-            if dx > dp(14) or dy > dp(14):
+            if dx > dp(12) or dy > dp(12):
                 self._lp_event.cancel()
                 self._lp_event = None
         return super().on_touch_move(touch)
@@ -67,6 +105,16 @@ class CardPID(BoxLayout):
         if self._lp_event:
             self._lp_event.cancel()
             self._lp_event = None
+        if self._arrastando and touch.grab_current is self:
+            touch.ungrab(self)
+            self._arrastando = False
+            self.opacity = 1.0
+            if self._ghost:
+                Window.remove_widget(self._ghost)
+                self._ghost = None
+            self.app_ref.scroll_painel.do_scroll_y = True
+            self.app_ref._salvar_ordem_pids()
+            return True
         return super().on_touch_up(touch)
 
     def _disparar_lp(self):
@@ -307,7 +355,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
         if nome_scr == "boletim":
             self.atualizar_tela_boletim()
 
-    def _criar_tela_painel(self):
+        def _criar_tela_painel(self):
         scr = Screen(name="painel")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
 
@@ -334,17 +382,36 @@ class TR4ScannerApp(App, TR4EngineMixin):
         barra_p.add_widget(btn_ord_pad)
         box.add_widget(barra_p)
 
-        scroll = ScrollView(bar_width=dp(5))
+        self.scroll_painel = ScrollView(bar_width=dp(5))
         self.grid_painel = GridLayout(cols=2, spacing=dp(8), size_hint_y=None, padding=(dp(2), dp(2)))
         self.grid_painel.bind(minimum_height=self.grid_painel.setter("height"))
-        scroll.add_widget(self.grid_painel)
-        box.add_widget(scroll)
+        self.scroll_painel.add_widget(self.grid_painel)
+        box.add_widget(self.scroll_painel)
 
         self._reconstruir_cards_painel()
         scr.add_widget(box)
         return scr
 
-    def _reconstruir_cards_painel(self):
+    def _processar_movimento_drag(self, pid_origem, win_pos):
+        sc = self.scroll_painel
+        _, sc_y = sc.to_window(*sc.pos)
+        sc_top = sc_y + sc.height
+        if win_pos[1] > sc_top - dp(40) and sc.scroll_y < 1.0:
+            sc.scroll_y = min(1.0, sc.scroll_y + 0.04)
+        elif win_pos[1] < sc_y + dp(40) and sc.scroll_y > 0.0:
+            sc.scroll_y = max(0.0, sc.scroll_y - 0.04)
+
+        local_pos = self.grid_painel.to_widget(*win_pos)
+        alvo_id = None
+        for child in self.grid_painel.children:
+            if isinstance(child, CardPID) and child.pid_id != pid_origem:
+                if child.collide_point(*local_pos):
+                    alvo_id = child.pid_id
+                    break
+        if alvo_id:
+            self.reordenar_card_drag(pid_origem, alvo_id)
+
+    def _reconstruir_cards_painel(self, pid_arrastando=None):
         self.grid_painel.clear_widgets()
         self.cards_ui = {}
         mapa_pids = {p["id"]: p for p in PIDS_DB}
@@ -359,13 +426,15 @@ class TR4ScannerApp(App, TR4EngineMixin):
             p = mapa_pids[pid_id]
             card = CardPID(
                 pid_id=pid_id,
-                on_long_press=self.abrir_menu_ordem_card,
+                app_ref=self,
                 orientation="vertical",
                 size_hint_y=None,
                 height=dp(106),
                 padding=(dp(6), dp(6)),
                 spacing=dp(2),
             )
+            if pid_id == pid_arrastando:
+                card.opacity = 0.25
             with card.canvas.before:
                 Color(0.13, 0.15, 0.20, 1)
                 bg = Rectangle(pos=card.pos, size=card.size)
