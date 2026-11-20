@@ -90,12 +90,14 @@ class CardPID(BoxLayout):
     def on_touch_move(self, touch):
         if self._arrastando and touch.grab_current is self:
             if self._ghost:
-                self._ghost.pos = (touch.x - self._offset, touch.y - self._offset)
+                ox, oy = self._offset
+                self._ghost.pos = (touch.x - ox, touch.y - oy)
             self.app_ref._processar_movimento_drag(self.pid_id, touch.pos)
             return True
         if self._lp_event:
-            dx = abs(touch.x - self._touch_ini)
-            dy = abs(touch.y - self._touch_ini)
+            ix, iy = self._touch_ini
+            dx = abs(touch.x - ix)
+            dy = abs(touch.y - iy)
             if dx > dp(12) or dy > dp(12):
                 self._lp_event.cancel()
                 self._lp_event = None
@@ -389,9 +391,10 @@ class TR4ScannerApp(App, TR4EngineMixin):
         sc = self.scroll_painel
         _, sc_y = sc.to_window(*sc.pos)
         sc_top = sc_y + sc.height
-        if win_pos > sc_top - dp(40) and sc.scroll_y < 1.0:
+        _, wy = win_pos
+        if wy > sc_top - dp(40) and sc.scroll_y < 1.0:
             sc.scroll_y = min(1.0, sc.scroll_y + 0.04)
-        elif win_pos < sc_y + dp(40) and sc.scroll_y > 0.0:
+        elif wy < sc_y + dp(40) and sc.scroll_y > 0.0:
             sc.scroll_y = max(0.0, sc.scroll_y - 0.04)
 
         local_pos = self.grid_painel.to_widget(*win_pos)
