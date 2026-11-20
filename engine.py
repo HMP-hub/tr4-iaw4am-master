@@ -16,11 +16,11 @@ from kivy.uix.button import Button
 from kivy.uix.label import Label
 from pids import PIDS_DB
 
-# Apenas comandos compostos rapidos para vigilancia em segundo plano
+# Comandos compostos rapidos para vigilancia continua em segundo plano
 PIDS_VIGILANCIA_BG = {
     "RPM", "VEL", "MAP", "ECT", "TPS", "LAMBDA_1",
     "STFT", "LTFT", "VBAT", "TI_EFETIVO", "AVANCO",
-    "KNOCK_MAX", "IAC", "RPM_ALVO", "FAN_STATUS",
+    "KNOCK_MAX", "KNOCK_NOISE", "IAC", "RPM_ALVO", "FAN_STATUS",
 }
 
 CMDS_MODO_01_PROBE = [
@@ -182,6 +182,9 @@ class TR4EngineMixin:
             "knock_pior_rpm": 0,
             "knock_pior_map": 0.0,
             "knock_ativo_frame": False,
+            "knock_v_max": 0.0,
+            "knock_v_eventos": 0,
+            "knock_v_ativo_frame": False,
             "lambda_ultimo_lado": None,
             "lambda_trocas": 0,
             "tempo_cl_quente": 0.0,
@@ -214,7 +217,7 @@ class TR4EngineMixin:
         if hasattr(self, "lbl_boletim"):
             self.lbl_boletim.text = (
                 "Nova viagem iniciada! Telemetria zerada.\n\n"
-                "Monitorando 7 sistemas em segundo plano: detonacao por cilindro, arrefecimento, "
+                "Monitorando 7 sistemas em segundo plano: detonacao (graus e Volts), arrefecimento, "
                 "sonda lambda/mistura, vacuo/IAC, bateria/alternador, injecao/cut-off e ignicao."
             )
 
@@ -262,7 +265,7 @@ class TR4EngineMixin:
             if ect >= 98.0:
                 t["tempo_acima_98c"] += dt
 
-        # 2. Detonacao / Knock consolidado e individual por cilindro
+        # 2. Detonacao / Knock (Atraso em graus + Sinal bruto em Volts 2168)
         motor_rodando = isinstance(rpm, (int, float)) and rpm >= 650
         sob_carga = (isinstance(tps, (int, float)) and tps >= 12.0) or (isinstance(mp, (int, float)) and mp >= 52.0)
         k_max = self.valores_atuais.get("KNOCK_MAX")
@@ -290,6 +293,17 @@ class TR4EngineMixin:
                 t["knock_pior_map"] = float(mp) if isinstance(mp, (int, float)) else 0.0
         else:
             t["knock_ativo_frame"] = False
+
+        kv_noise = self.valores_atuais.get("KNOCK_NOISE")
+        if motor_rodando and isinstance(kv_noise, (int, float)):
+            if kv_noise > t["knock_v_max"]:
+                t["knock_v_max"] = kv_noise
+            if kv_noise > 2.50:
+                if not t["knock_v_ativo_frame"]:
+                    t["knock_v_eventos"] += 1
+                    t["knock_v_ativo_frame"] = True
+            else:
+                t["knock_v_ativo_frame"] = False
 
         # 3. Sonda Lambda Pre-Cat & Mistura
         quente = isinstance(ect, (int, float)) and ect >= 75.0
@@ -322,7 +336,7 @@ class TR4EngineMixin:
         if pobre_wot:
             t["pobre_carga_eventos"] += 1
 
-        # 4. Marcha lenta aquecida (Vacuo MAP, Passos IAC, TI Lenta e Avanco Base)
+        # 4. Marcha lenta aquecida
         em_lenta_quente = (
             isinstance(ect, (int, float)) and ect >= 80.0
             and isinstance(vel, (int, float)) and vel <= 1
@@ -343,7 +357,7 @@ class TR4EngineMixin:
                 t["avanco_lenta_soma"] += av
                 t["avanco_lenta_n"] += 1
 
-        # 5. Sistema de Carga (Bateria & Alternador)
+        # 5. Sistema de Carga
         if isinstance(vbat, (int, float)) and 7.0 <= vbat <= 16.5:
             if not motor_rodando:
                 if t["vbat_min_partida"] is None or vbat < t["vbat_min_partida"]:
@@ -372,10 +386,13 @@ class TR4EngineMixin:
             if t["avanco_max"] is None or av > t["avanco_max"]:
                 t["avanco_max"] = av
 
-        # Alertas visuais de risco (acendem a borda vermelha da tela e o banner)
+        # Alertas visuais de risco (borda vermelha pulsante + banner superior)
+        knock_v_alto = isinstance(kv_noise, (int, float)) and kv_noise > 2.50 and motor_rodando
         alerta = ""
-        if isinstance(ect, (int, float)) and ect >= 100.0:
+        if isinstance(ect, (int, float)) and ect >= 99.0:
             alerta = f"RISCO TERMICO: TEMPERATURA AGUA {ect:.0f} C!"
+        elif knock_v_alto:
+            alerta = f"DETONACAO / PRE-IGNICAO: SENSOR KNOCK {kv_noise:.2f} V (>2.5V)!"
         elif pior_cil_deg <= -4.5 and sob_carga and motor_rodando:
             cil_txt = f" CIL {pior_cil_idx}" if pior_cil_idx > 0 else ""
             alerta = f"RISCO DETONACAO{cil_txt}: ATRASO {pior_cil_deg:.2f} GRAUS!"
@@ -392,15 +409,18 @@ class TR4EngineMixin:
         dur_s = max(1, int(time.time() - t["inicio_ts"]))
         mins, segs = divmod(dur_s, 60)
 
-        # 1. Detonacao / Knock por Cilindro
+        # 1. Detonacao / Knock (Graus + Volts 2168)
         ev_k = t["knock_eventos"]
         pior_k = t["knock_pior_graus"]
         pior_c = t["knock_pior_cil"]
-        if ev_k == 0 and pior_k > -0.5:
-            sev_k = "NORMAL (Sem atraso por detonacao registrado)"
-        elif pior_k >= -3.5 and ev_k <= 8:
-            sev_k = "LEVE (Pontual em retomada/WOT - aceitavel)"
-        elif pior_k >= -5.5:
+        kv_max = t["knock_v_max"]
+        kv_ev = t["knock_v_eventos"]
+
+        if ev_k == 0 and pior_k > -0.5 and kv_max <= 2.50:
+            sev_k = "NORMAL (Sem detonacao ou pre-ignicao detectada)"
+        elif pior_k >= -3.5 and ev_k <= 8 and kv_ev <= 3:
+            sev_k = "LEVE (Pontual sob carga alta / WOT - aceitavel)"
+        elif pior_k >= -5.5 or kv_ev > 3:
             sev_k = "MODERADA (Atencao: octanagem combustivel / carbonizacao)"
         else:
             sev_k = "SEVERA (Risco mecanico - revisar combustivel/velas)"
@@ -410,7 +430,8 @@ class TR4EngineMixin:
             f"  - Gravidade: {sev_k}\n"
             f"  - Atraso max ECU: {pior_k:.2f} graus"
             + (f" ({cil_str}{t['knock_pior_rpm']} rpm / {t['knock_pior_map']:.1f} kPa)\n" if ev_k > 0 else "\n")
-            + f"  - Eventos sob carga: {ev_k} ocorrencia(s)"
+            + f"  - Pico sinal sensor (2168): {kv_max:.2f} V (Acima 2.50V: {kv_ev}x)\n"
+            + f"  - Eventos retardo sob carga: {ev_k} ocorrencia(s)"
         )
 
         # 2. Sistema de Arrefecimento
@@ -420,8 +441,8 @@ class TR4EngineMixin:
             diag_ect = "Aguardando amostras de temperatura"
         elif t["ect_max"] >= 103.0:
             diag_ect = "CRITICO: Superaquecimento detectado (>= 103 C)"
-        elif t["ect_max"] >= 98.0:
-            diag_ect = "ATENCAO: Temperatura elevada (98-102 C)"
+        elif t["ect_max"] >= 99.0:
+            diag_ect = "ALERTA: Temperatura elevada (>= 99 C - verificar ventoinha/radiador)"
         elif dur_s >= 600 and t["amostras_mov"] > 30 and t["ect_max"] < 78.0:
             diag_ect = "ATENCAO: Motor nao atingiu 78 C (valvula termostatica aberta?)"
         else:
@@ -475,21 +496,26 @@ class TR4EngineMixin:
         else:
             det_lenta = "  - Aguardando marcha lenta estabilizada com motor >= 80 C."
 
-        # 5. Sistema de Carga (Bateria & Alternador)
+        # 5. Sistema de Carga (Bateria & Alternador com Saude Preditiva)
         if t["vbat_n"] > 0:
             vbat_med = t["vbat_soma"] / t["vbat_n"]
             vbat_max = t["vbat_max"] or vbat_med
-            v_part = f"{t['vbat_min_partida']:.1f} V" if t["vbat_min_partida"] is not None else "N/A"
+            v_min_p = t["vbat_min_partida"]
+            v_part = f"{v_min_p:.1f} V" if v_min_p is not None else "N/A"
             if vbat_med < 13.2:
                 diag_bat = "ATENCAO: Tensao de carga baixa (< 13.2 V - revisar alternador/correia)"
             elif vbat_max > 14.9:
                 diag_bat = "ATENCAO: Sobretensao (> 14.9 V - regulador de voltagem)"
+            elif v_min_p is not None and v_min_p < 9.8:
+                diag_bat = f"CRITICO: Queda severa na partida ({v_part}) - bateria no fim da vida util!"
+            elif v_min_p is not None and v_min_p < 10.4:
+                diag_bat = f"ATENCAO PREDITIVA: Queda na partida ({v_part}) - desgaste intermediario da bateria"
             else:
-                diag_bat = "NORMAL (Alternador e regulador operando na faixa ideal)"
+                diag_bat = "NORMAL (Alternador e bateria operando na faixa ideal)"
             det_bat = (
                 f"  - Estado: {diag_bat}\n"
                 f"  - Tensao media rodando: {vbat_med:.1f} V (Pico: {vbat_max:.1f} V)\n"
-                f"  - Minima pre-partida: {v_part}"
+                f"  - Minima pre-partida: {v_part} (Ref: >= 10.5 V ideal | < 9.8 V trocar)"
             )
         else:
             det_bat = "  - Aguardando amostras com motor em funcionamento."
@@ -811,7 +837,7 @@ class TR4EngineMixin:
             for cmd in setup_cmds:
                 if self._abortado(seq):
                     return
-                self.enviar_comando_raw(cmd, timeout=0.9)
+                self.enviar_comando_raw(cmd, timeout=0.8)
 
             Clock.schedule_once(
                 lambda dt: self._atualizar_status("SINCRONIZANDO BARRAMENTO K-LINE...", (1.0, 0.78, 0.2, 1))
@@ -869,67 +895,6 @@ class TR4EngineMixin:
         if hasattr(self, "lbl_eng"):
             self.lbl_eng.text = (
                 "ECU conectada com sucesso!\n\n"
-                "Dica: Segure pressionado qualquer card no Painel para reordenar.\n\n"
-                "Para calibrar nos 4 estados, toque em CAPTURAR CALIBRACAO:\n"
-                "1) Chave ligada, motor frio desligado\n"
-                "2) Marcha lenta quente (80-94 C)\n"
-                "3) Ventoinha armada (~97 C)\n"
-                "4) Cut-off (>2200 RPM, pe fora do pedal)"
-            )
-
-    def _falha_conexao(self, titulo, log_hs):
-        self.rodando = False
-        self._fechar_socket_bt()
-        self._atualizar_estado_conexao("DESCONECTADO")
-        self._atualizar_status(titulo, (1.0, 0.30, 0.30, 1))
-        if hasattr(self, "lbl_eng") and log_hs:
-            detalhes = "\n".join(log_hs[-6:])
-            self.lbl_eng.text = f"{titulo}\n\n{detalhes}"
-
-    def _tratar_perda_conexao(self, motivo):
-        if getattr(self, "estado_conexao", "") == "DESCONECTADO":
-            return
-        self.rodando = False
-        self.varrendo = False
-        self.modo_simulacao = False
-        if getattr(self, "gravando_log", False):
-            self.parar_gravacao_log()
-        self._fechar_socket_bt()
-        self._atualizar_alerta_visual("")
-        self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
-        self.atualizar_interface(0)
-        self._atualizar_estado_conexao("DESCONECTADO")
-        self._atualizar_status(motivo, (1.0, 0.28, 0.28, 1))
-        if hasattr(self, "lbl_eng"):
-            self.lbl_eng.text = f"{motivo}\n\nLigue a chave do veiculo e toque em CONECTAR para reconectar."
-        self.atualizar_tela_boletim()
-
-    def _atualizar_status(self, texto, cor):
-        if hasattr(self, "lbl_status"):
-            self.lbl_status.text = texto
-            self.lbl_status.color = cor
-
-    def _atualizar_alerta_visual(self, msg_alerta):
-        if not hasattr(self, "_cor_borda_alerta") or not hasattr(self, "lbl_banner_alerta"):
-            return
-        if msg_alerta:
-            pulso = 1.0 if (int(time.time() * 3) % 2 == 0) else 0.35
-            self._cor_borda_alerta.a = pulso
-            self.lbl_banner_alerta.text = msg_alerta
-            self.lbl_banner_alerta.height = dp(32)
-            self.lbl_banner_alerta.opacity = 1.0
-        else:
-            self._cor_borda_alerta.a = 0.0
-            self.lbl_banner_alerta.text = ""
-            self.lbl_banner_alerta.height = 0
-            self.lbl_banner_alerta.opacity = 0.0
-
-    def _sucesso_conexao(self, nome_dev):
-        self._atualizar_estado_conexao("CONECTADO")
-        self._atualizar_status(f"ECU CONECTADA ({nome_dev}) | K-LINE ATIVO", (0.2, 0.95, 0.45, 1))
-        if hasattr(self, "lbl_eng"):
-            self.lbl_eng.text = (
-                "ECU conectada com sucesso!\n\n"
                 "Para calibrar 100% dos PIDs, toque em CAPTURAR CALIBRACAO nos 4 estados:\n"
                 "1) Chave ligada, motor frio desligado\n"
                 "2) Marcha lenta quente (80-94 C)\n"
@@ -956,6 +921,7 @@ class TR4EngineMixin:
             self.parar_gravacao_log()
         self._fechar_socket_bt()
         self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
+        self._atualizar_visual_alerta("")
         self.atualizar_interface(0)
         self._atualizar_estado_conexao("DESCONECTADO")
         self._atualizar_status(motivo, (1.0, 0.28, 0.28, 1))
@@ -1592,113 +1558,6 @@ class TR4EngineMixin:
         self.lbl_eng.text = "Encerrando sessao atual e buscando modulos no Pino 7...\n\nAguarde ~20 segundos..."
         threading.Thread(target=self._buscar_modulos_thread, daemon=True).start()
 
-    def _buscar_modulos_thread(self):
-        time.sleep(0.35)
-        self.enviar_comando_raw("82", timeout=1.0)
-        self.enviar_comando_raw("ATPC", timeout=0.8)
-        time.sleep(0.4)
-
-        alvos = [
-            ("10", "Injecao Eletronica (ECU)"),
-            ("11", "Motor / Coprocessador"),
-            ("18", "Transmissao Automatica (TCU)"),
-            ("28", "Freios ABS / Tracao"),
-            ("40", "Carroceria / BCM"),
-            ("58", "Airbag (SRS)"),
-            ("60", "Painel / Imobilizador"),
-        ]
-        resultados = []
-        for addr, nome in alvos:
-            if self.estado_conexao != "CONECTADO":
-                return
-            msg_step = f"Testando endereco 0x{addr} ({nome})..."
-            Clock.schedule_once(lambda dt, m=msg_step: setattr(self.lbl_eng, "text", m))
-            self.enviar_comando_raw("ATSP5", timeout=0.8)
-            self.enviar_comando_raw("ATST64", timeout=0.8)
-            self.enviar_comando_raw(f"ATSH81{addr}F1", timeout=0.8)
-            self.enviar_comando_raw(f"ATWM81{addr}F13E", timeout=0.8)
-            r_fi = self.enviar_comando_raw("ATFI", timeout=2.5)
-            r_ses = self.enviar_comando_raw("1081", timeout=1.5)
-            limpo = "".join(c for c in (r_fi + r_ses).upper() if c in "0123456789ABCDEF")
-            if "OK" in r_fi.upper() or "5081" in limpo or "C1" in limpo:
-                resultados.append(f"[0x{addr}] {nome}: RESPONDEU!")
-                self.enviar_comando_raw("82", timeout=0.8)
-            else:
-                resultados.append(f"[0x{addr}] {nome}: Sem resposta")
-            self.enviar_comando_raw("ATPC", timeout=0.8)
-            time.sleep(0.35)
-
-        if self.estado_conexao != "CONECTADO":
-            return
-        self.enviar_comando_raw("ATSP5", timeout=0.8)
-        self.enviar_comando_raw("ATST64", timeout=0.8)
-        self.enviar_comando_raw("ATSH8110F1", timeout=0.8)
-        self.enviar_comando_raw("ATWM8110F13E", timeout=0.8)
-        self.enviar_comando_raw("ATFI", timeout=2.5)
-        self.enviar_comando_raw("1081", timeout=1.5)
-
-        texto_final = "Resultado da Busca de Modulos (Pino 7):\n\n" + "\n".join(resultados)
-        Clock.schedule_once(lambda dt, t=texto_final: setattr(self.lbl_eng, "text", t))
-        if self.estado_conexao == "CONECTADO" and self.bt_socket:
-            self.rodando = True
-            self.loop_leitura()
-
-    def desconectar_ecu(self, *args):
-        self.cancelar_conexao = True
-        self._con_seq = getattr(self, "_con_seq", 0) + 1
-        estava_conectado = (getattr(self, "estado_conexao", "") == "CONECTADO")
-        self.rodando = False
-        self.varrendo = False
-        self.modo_simulacao = False
-        self.parar_gravacao_log()
-
-        if estava_conectado and self.bt_out and self.bt_in:
-            try:
-                self.enviar_comando_raw("82", timeout=0.5)
-                self.enviar_comando_raw("ATPC", timeout=0.4)
-            except Exception:
-                pass
-
-        self._fechar_socket_bt()
-        self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
-        self.valores_min = {}
-        self.valores_max = {}
-        self._atualizar_visual_alerta("")
-        self.atualizar_interface(0)
-        self._atualizar_estado_conexao("DESCONECTADO")
-        if hasattr(self, "lbl_eng"):
-            self.lbl_eng.text = "Desconectado."
-        self._atualizar_status("DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)", (1, 0.78, 0.2, 1))
-
-    def iniciar_varredura_ecu(self, *args):
-        if getattr(self, "varrendo", False):
-            return
-        if self.modo_simulacao:
-            self.lbl_eng.text = "Simulacao: 2131, 213B, 2147 ativos."
-            return
-        if not self.rodando or not self.bt_out or not self.bt_in:
-            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
-            return
-        self.rodando = False
-        self.varrendo = True
-        self.lbl_eng.text = "Iniciando varredura completa da ECU..."
-        threading.Thread(target=self._executar_varredura_thread, daemon=True).start()
-
-    def parar_varredura_ecu(self, *args):
-        if getattr(self, "varrendo", False):
-            self.varrendo = False
-            self.lbl_eng.text = "Parando varredura e salvando parcial..."
-
-    def _executar_varredura_thread(self):
-        time.sleep(0.35)
-        pasta = self._obter_pasta_gravacao()
-        nome_arq = os.path.join(pasta, f"MAPA_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-        encontrados = []
-        for code in range(0x00, 0x100):
-            if not getattr(self, "varrendo", False):
-                break
-            cmd = f"21{code:02X}"
-            if code % 8 == 0:
     def _buscar_modulos_thread(self):
         time.sleep(0.35)
         self.enviar_comando_raw("82", timeout=1.0)
