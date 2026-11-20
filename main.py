@@ -90,12 +90,12 @@ class CardPID(BoxLayout):
     def on_touch_move(self, touch):
         if self._arrastando and touch.grab_current is self:
             if self._ghost:
-                self._ghost.pos = (touch.x - self._offset[0], touch.y - self._offset[1])
+                self._ghost.pos = (touch.x - self._offset, touch.y - self._offset)
             self.app_ref._processar_movimento_drag(self.pid_id, touch.pos)
             return True
         if self._lp_event:
-            dx = abs(touch.x - self._touch_ini[0])
-            dy = abs(touch.y - self._touch_ini[1])
+            dx = abs(touch.x - self._touch_ini)
+            dy = abs(touch.y - self._touch_ini)
             if dx > dp(12) or dy > dp(12):
                 self._lp_event.cancel()
                 self._lp_event = None
@@ -114,15 +114,9 @@ class CardPID(BoxLayout):
                 self._ghost = None
             self.app_ref.scroll_painel.do_scroll_y = True
             self.app_ref._salvar_ordem_pids()
+            self.app_ref._reconstruir_cards_painel()
             return True
         return super().on_touch_up(touch)
-
-    def _disparar_lp(self):
-        self._lp_event = None
-        if self.on_long_press:
-            self.on_long_press(self.pid_id)
-
-
 class GraficoRealtime(Widget):
     def __init__(self, cor_linha=(0.2, 0.85, 0.45, 1), max_pontos=90, **kwargs):
         super().__init__(**kwargs)
@@ -187,6 +181,7 @@ class GraficoRealtime(Widget):
                 Color(*self.cor_linha)
                 Line(points=coords, width=dp(1.8))
 
+
 class TR4ScannerApp(App, TR4EngineMixin):
     def on_start(self):
         manter_tela_acesa()
@@ -233,7 +228,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
             self._cor_borda_alerta = Color(1.0, 0.12, 0.12, 0.0)
             self._linha_borda_alerta = Line(rectangle=(0, 0, 100, 100), width=dp(4.5))
         root.bind(pos=self._atualizar_retangulo_borda, size=self._atualizar_retangulo_borda)
-
         self.lbl_status = Label(
             text="DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)",
             size_hint_y=None,
@@ -354,8 +348,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
             btn.background_color = (0.16, 0.52, 0.78, 1) if k == nome_scr else (0.18, 0.21, 0.27, 1)
         if nome_scr == "boletim":
             self.atualizar_tela_boletim()
-
-        def _criar_tela_painel(self):
+    def _criar_tela_painel(self):
         scr = Screen(name="painel")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
 
@@ -396,9 +389,9 @@ class TR4ScannerApp(App, TR4EngineMixin):
         sc = self.scroll_painel
         _, sc_y = sc.to_window(*sc.pos)
         sc_top = sc_y + sc.height
-        if win_pos[1] > sc_top - dp(40) and sc.scroll_y < 1.0:
+        if win_pos > sc_top - dp(40) and sc.scroll_y < 1.0:
             sc.scroll_y = min(1.0, sc.scroll_y + 0.04)
-        elif win_pos[1] < sc_y + dp(40) and sc.scroll_y > 0.0:
+        elif win_pos < sc_y + dp(40) and sc.scroll_y > 0.0:
             sc.scroll_y = max(0.0, sc.scroll_y - 0.04)
 
         local_pos = self.grid_painel.to_widget(*win_pos)
@@ -478,7 +471,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
             card.add_widget(rodape)
             self.grid_painel.add_widget(card)
             self.cards_ui[pid_id] = (lbl_val, lbl_min, lbl_max, p["unidade"])
-
     def _criar_tela_pids(self):
         scr = Screen(name="pids")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
@@ -611,7 +603,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
                 self.checks_pids[pid_id].active = True
             self._reconstruir_cards_painel()
             graf_widget.limpar()
-
     def _criar_tela_log(self):
         scr = Screen(name="log")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
