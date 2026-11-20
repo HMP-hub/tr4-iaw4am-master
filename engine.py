@@ -92,77 +92,21 @@ class TR4EngineMixin:
         if hasattr(self, "_reconstruir_cards_painel"):
             self._reconstruir_cards_painel()
 
-    def abrir_menu_ordem_card(self, pid_id):
-        mapa_nomes = {p["id"]: p["nome"] for p in PIDS_DB}
-        nome = mapa_nomes.get(pid_id, pid_id)
-
-        box = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(8))
-        box.add_widget(
-            Label(
-                text=f"Mover card no Painel:\n{nome}",
-                size_hint_y=None,
-                height=dp(46),
-                bold=True,
-                font_size="13.5sp",
-                halign="center",
-            )
-        )
-        popup = Popup(title="Reordenar Card", content=box, size_hint=(0.86, 0.50))
-
-        acoes = [
-            ("MOVER PARA O TOPO (1o)", (0.14, 0.52, 0.78, 1), "topo"),
-            ("SUBIR 1 POSICAO", (0.16, 0.58, 0.40, 1), "subir"),
-            ("DESCER 1 POSICAO", (0.24, 0.44, 0.62, 1), "descer"),
-        ]
-        for rotulo, cor, direcao in acoes:
-            b = Button(
-                text=rotulo,
-                size_hint_y=None,
-                height=dp(46),
-                font_size="13sp",
-                bold=True,
-                background_normal="",
-                background_color=cor,
-            )
-            b.bind(on_release=lambda inst, p=pid_id, d=direcao, pop=popup: self._mover_card_painel(p, d, pop))
-            box.add_widget(b)
-
-        b_fec = Button(
-            text="FECHAR",
-            size_hint_y=None,
-            height=dp(42),
-            font_size="12.5sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.55, 0.24, 0.24, 1),
-        )
-        b_fec.bind(on_release=popup.dismiss)
-        box.add_widget(b_fec)
-        popup.open()
-
-    def _mover_card_painel(self, pid_id, direcao, popup):
-        try:
-            popup.dismiss()
-        except Exception:
-            pass
-        ativos = [x for x in self.ordem_pids if self.selecionados.get(x, False)]
-        if pid_id not in ativos:
+    def reordenar_card_drag(self, pid_origem, pid_destino):
+        if pid_origem == pid_destino:
             return
-        idx_at = ativos.index(pid_id)
-        if direcao == "topo" and idx_at > 0:
-            ativos.pop(idx_at)
-            ativos.insert(0, pid_id)
-        elif direcao == "subir" and idx_at > 0:
-            ativos[idx_at - 1], ativos[idx_at] = ativos[idx_at], ativos[idx_at - 1]
-        elif direcao == "descer" and idx_at < len(ativos) - 1:
-            ativos[idx_at + 1], ativos[idx_at] = ativos[idx_at], ativos[idx_at + 1]
+        ativos = [x for x in self.ordem_pids if self.selecionados.get(x, False)]
+        if pid_origem not in ativos or pid_destino not in ativos:
+            return
+        idx_orig = ativos.index(pid_origem)
+        idx_dest = ativos.index(pid_destino)
+        ativos.pop(idx_orig)
+        ativos.insert(idx_dest, pid_origem)
 
         inativos = [x for x in self.ordem_pids if not self.selecionados.get(x, False)]
         self.ordem_pids = ativos + inativos
-        self._salvar_ordem_pids()
         if hasattr(self, "_reconstruir_cards_painel"):
-            self._reconstruir_cards_painel()
-
+            self._reconstruir_cards_painel(pid_arrastando=pid_origem)
     def _init_telemetria_viagem(self):
         self.tel = {
             "inicio_ts": time.time(),
@@ -264,7 +208,6 @@ class TR4EngineMixin:
                 t["tempo_para_80c"] = round(agora - t["inicio_ts"], 0)
             if ect >= 98.0:
                 t["tempo_acima_98c"] += dt
-
         # 2. Detonacao / Knock (Atraso em graus + Sinal bruto em Volts 2168)
         motor_rodando = isinstance(rpm, (int, float)) and rpm >= 650
         sob_carga = (isinstance(tps, (int, float)) and tps >= 12.0) or (isinstance(mp, (int, float)) and mp >= 52.0)
@@ -401,7 +344,6 @@ class TR4EngineMixin:
         elif pobre_wot:
             alerta = f"RISCO MISTURA POBRE EM CARGA (SONDA {lam:.0f} mV)!"
         t["alerta_critico_atual"] = alerta
-
     def gerar_texto_boletim(self):
         if not hasattr(self, "tel"):
             self._init_telemetria_viagem()
@@ -496,7 +438,7 @@ class TR4EngineMixin:
         else:
             det_lenta = "  - Aguardando marcha lenta estabilizada com motor >= 80 C."
 
-        # 5. Sistema de Carga (Bateria & Alternador com Saude Preditiva)
+        # 5. Sistema de Carga
         if t["vbat_n"] > 0:
             vbat_med = t["vbat_soma"] / t["vbat_n"]
             vbat_max = t["vbat_max"] or vbat_med
@@ -576,7 +518,6 @@ class TR4EngineMixin:
         except Exception as e:
             if hasattr(self, "lbl_boletim"):
                 self.lbl_boletim.text = f"Erro ao salvar boletim: {e}"
-
     def _caminho_config_bt(self):
         base = "."
         try:
@@ -769,7 +710,6 @@ class TR4EngineMixin:
             pass
         self._salvar_bt_salvo(addr, nome)
         self._iniciar_conexao_completa(addr, nome)
-
     def _iniciar_conexao_completa(self, addr, nome_dev):
         if self.rodando or self.modo_simulacao:
             self.desconectar_ecu()
@@ -972,7 +912,6 @@ class TR4EngineMixin:
         finally:
             if lock:
                 lock.release()
-
     def parse_bytes_kwp(self, resp_str, cmd_enviado):
         limpo = "".join(c for c in resp_str.upper() if c in "0123456789ABCDEF")
         try:
@@ -1150,7 +1089,6 @@ class TR4EngineMixin:
             self._atualizar_status(f"ECU CONECTADA | K-LINE ATIVO{rec_tag}", (0.2, 0.95, 0.45, 1))
         elif self.estado_conexao == "SIMULACAO":
             self._atualizar_status(f"SIMULACAO ATIVA | IAW 4AM{rec_tag}", (0.3, 0.9, 0.5, 1))
-
     def _obter_pasta_gravacao(self):
         pasta_dl = "/sdcard/Download"
         try:
@@ -1353,7 +1291,6 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
-
     def ler_info_ecu(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = (
@@ -1463,7 +1400,6 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
-
     def apagar_dtcs(self, *args):
         if not self.modo_simulacao and (not self.rodando or not self.bt_out or not self.bt_in):
             self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ou SIMULACAO primeiro."
@@ -1557,7 +1493,6 @@ class TR4EngineMixin:
         self.rodando = False
         self.lbl_eng.text = "Encerrando sessao atual e buscando modulos no Pino 7...\n\nAguarde ~20 segundos..."
         threading.Thread(target=self._buscar_modulos_thread, daemon=True).start()
-
     def _buscar_modulos_thread(self):
         time.sleep(0.35)
         self.enviar_comando_raw("82", timeout=1.0)
