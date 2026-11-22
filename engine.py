@@ -16,12 +16,12 @@ from kivy.uix.button import Button
 from kivy.uix.label import Label
 from pids import PIDS_DB
 
-# Comandos compostos rapidos para vigilancia continua em segundo plano
-PIDS_VIGILANCIA_BG = {
-    "RPM", "VEL", "MAP", "ECT", "TPS", "LAMBDA_1",
-    "STFT", "LTFT", "VBAT", "TI_EFETIVO", "AVANCO",
-    "KNOCK_MAX", "KNOCK_NOISE", "IAC", "RPM_ALVO", "FAN_STATUS",
-}
+# Lista ordenada de PIDs secundarios monitorados em rodizio leve
+PIDS_VIGILANCIA_BG = [
+    "ECT", "VBAT", "TI_EFETIVO", "AVANCO",
+    "KNOCK_MAX", "KNOCK_NOISE", "STFT", "LTFT",
+    "VEL", "IAC", "FAN_STATUS",
+]
 
 CMDS_MODO_01_PROBE = [
     ("0103", "Status Loop OBD2"),
@@ -107,6 +107,7 @@ class TR4EngineMixin:
         self.ordem_pids = ativos + inativos
         if hasattr(self, "_reconstruir_cards_painel"):
             self._reconstruir_cards_painel(pid_arrastando=pid_origem)
+
     def _init_telemetria_viagem(self):
         self.tel = {
             "inicio_ts": time.time(),
@@ -208,6 +209,7 @@ class TR4EngineMixin:
                 t["tempo_para_80c"] = round(agora - t["inicio_ts"], 0)
             if ect >= 98.0:
                 t["tempo_acima_98c"] += dt
+
         # 2. Detonacao / Knock (Atraso em graus + Sinal bruto em Volts 2168)
         motor_rodando = isinstance(rpm, (int, float)) and rpm >= 650
         sob_carga = (isinstance(tps, (int, float)) and tps >= 12.0) or (isinstance(mp, (int, float)) and mp >= 52.0)
@@ -241,7 +243,7 @@ class TR4EngineMixin:
         if motor_rodando and isinstance(kv_noise, (int, float)):
             if kv_noise > t["knock_v_max"]:
                 t["knock_v_max"] = kv_noise
-            if kv_noise > 2.50:
+            if kv_noise > 2.45:
                 if not t["knock_v_ativo_frame"]:
                     t["knock_v_eventos"] += 1
                     t["knock_v_ativo_frame"] = True
@@ -330,13 +332,13 @@ class TR4EngineMixin:
                 t["avanco_max"] = av
 
         # Alertas visuais de risco (borda vermelha pulsante + banner superior)
-        knock_v_alto = isinstance(kv_noise, (int, float)) and kv_noise > 2.50 and motor_rodando
+        knock_v_critico = isinstance(kv_noise, (int, float)) and kv_noise > 2.80 and motor_rodando
         alerta = ""
         if isinstance(ect, (int, float)) and ect >= 99.0:
             alerta = f"RISCO TERMICO: TEMPERATURA AGUA {ect:.0f} C!"
-        elif knock_v_alto:
-            alerta = f"DETONACAO / PRE-IGNICAO: SENSOR KNOCK {kv_noise:.2f} V (>2.5V)!"
-        elif pior_cil_deg <= -4.5 and sob_carga and motor_rodando:
+        elif knock_v_critico:
+            alerta = f"DETONACAO CRITICA: SENSOR KNOCK {kv_noise:.2f} V (>2.80V)!"
+        elif pior_cil_deg <= -5.0 and sob_carga and motor_rodando:
             cil_txt = f" CIL {pior_cil_idx}" if pior_cil_idx > 0 else ""
             alerta = f"RISCO DETONACAO{cil_txt}: ATRASO {pior_cil_deg:.2f} GRAUS!"
         elif motor_rodando and isinstance(vbat, (int, float)) and vbat < 12.6:
@@ -344,6 +346,7 @@ class TR4EngineMixin:
         elif pobre_wot:
             alerta = f"RISCO MISTURA POBRE EM CARGA (SONDA {lam:.0f} mV)!"
         t["alerta_critico_atual"] = alerta
+
     def gerar_texto_boletim(self):
         if not hasattr(self, "tel"):
             self._init_telemetria_viagem()
@@ -358,10 +361,10 @@ class TR4EngineMixin:
         kv_max = t["knock_v_max"]
         kv_ev = t["knock_v_eventos"]
 
-        if ev_k == 0 and pior_k > -0.5 and kv_max <= 2.50:
+        if ev_k == 0 and pior_k > -0.5 and kv_max <= 2.45:
             sev_k = "NORMAL (Sem detonacao ou pre-ignicao detectada)"
-        elif pior_k >= -3.5 and ev_k <= 8 and kv_ev <= 3:
-            sev_k = "LEVE (Pontual sob carga alta / WOT - aceitavel)"
+        elif pior_k >= -3.5 and ev_k <= 8 and kv_max <= 2.80:
+            sev_k = "LEVE (Pontual sob carga alta - controlada pela ECU)"
         elif pior_k >= -5.5 or kv_ev > 3:
             sev_k = "MODERADA (Atencao: octanagem combustivel / carbonizacao)"
         else:
@@ -372,7 +375,7 @@ class TR4EngineMixin:
             f"  - Gravidade: {sev_k}\n"
             f"  - Atraso max ECU: {pior_k:.2f} graus"
             + (f" ({cil_str}{t['knock_pior_rpm']} rpm / {t['knock_pior_map']:.1f} kPa)\n" if ev_k > 0 else "\n")
-            + f"  - Pico sinal sensor (2168): {kv_max:.2f} V (Acima 2.50V: {kv_ev}x)\n"
+            + f"  - Pico sinal sensor (2168): {kv_max:.2f} V (Acima 2.45V: {kv_ev}x)\n"
             + f"  - Eventos retardo sob carga: {ev_k} ocorrencia(s)"
         )
 
@@ -518,6 +521,7 @@ class TR4EngineMixin:
         except Exception as e:
             if hasattr(self, "lbl_boletim"):
                 self.lbl_boletim.text = f"Erro ao salvar boletim: {e}"
+
     def _caminho_config_bt(self):
         base = "."
         try:
@@ -710,6 +714,7 @@ class TR4EngineMixin:
             pass
         self._salvar_bt_salvo(addr, nome)
         self._iniciar_conexao_completa(addr, nome)
+
     def _iniciar_conexao_completa(self, addr, nome_dev):
         if self.rodando or self.modo_simulacao:
             self.desconectar_ecu()
@@ -773,7 +778,7 @@ class TR4EngineMixin:
                 Clock.schedule_once(lambda dt: self._falha_conexao("SCANNER NAO RESPONDEU", log_hs))
                 return
 
-            setup_cmds = ["ATE0", "ATL0", "ATS0", "ATH0", "ATAT1", "ATST19", "ATSP5", "ATSH8110F1", "ATWM8110F13E"]
+            setup_cmds = ["ATE0", "ATL0", "ATS0", "ATH0", "ATAT1", "ATST0A", "ATSP5", "ATSH8110F1", "ATWM8110F13E"]
             for cmd in setup_cmds:
                 if self._abortado(seq):
                     return
@@ -881,7 +886,7 @@ class TR4EngineMixin:
         except Exception:
             pass
 
-    def enviar_comando_raw(self, cmd, timeout=0.6):
+    def enviar_comando_raw(self, cmd, timeout=0.35):
         if not self.bt_out or not self.bt_in:
             self._bt_io_erro = True
             return ""
@@ -912,6 +917,7 @@ class TR4EngineMixin:
         finally:
             if lock:
                 lock.release()
+
     def parse_bytes_kwp(self, resp_str, cmd_enviado):
         limpo = "".join(c for c in resp_str.upper() if c in "0123456789ABCDEF")
         try:
@@ -949,13 +955,14 @@ class TR4EngineMixin:
         t0 = time.time()
         ciclo = 0
         ciclos_sem_resposta = 0
+        n_bg = len(PIDS_VIGILANCIA_BG)
         while self.rodando:
             ciclo += 1
             t_atual = time.time() - t0
             cache_comandos = {}
             gravando_ativo = self.gravando_log and not getattr(self, "log_pausado", False)
             log_ativos = getattr(self, "selecionados_log", {}) if gravando_ativo else {}
-            ler_bg_agora = (ciclo % 4 == 1)
+            pid_bg_turno = PIDS_VIGILANCIA_BG[ciclo % n_bg]
             comandos_tentados = 0
             comandos_validos = 0
 
@@ -964,7 +971,7 @@ class TR4EngineMixin:
                     break
                 pid_id = pid["id"]
                 ativo_ui = self.selecionados.get(pid_id, False) or log_ativos.get(pid_id, False)
-                ativo_bg = (pid_id in ("LAMBDA_1", "RPM", "TPS", "MAP")) or (ler_bg_agora and (pid_id in PIDS_VIGILANCIA_BG))
+                ativo_bg = (pid_id in ("RPM", "MAP", "TPS")) or (pid_id == pid_bg_turno)
                 if not (ativo_ui or ativo_bg):
                     continue
                 if self.modo_simulacao:
@@ -974,7 +981,7 @@ class TR4EngineMixin:
                     cmd = pid["cmd"]
                     if cmd not in cache_comandos:
                         comandos_tentados += 1
-                        raw = self.enviar_comando_raw(cmd, timeout=0.6)
+                        raw = self.enviar_comando_raw(cmd, timeout=0.35)
                         parsed = self.parse_bytes_kwp(raw, cmd)
                         cache_comandos[cmd] = parsed
                         if parsed:
@@ -996,19 +1003,19 @@ class TR4EngineMixin:
 
                 if comandos_tentados == 0:
                     comandos_tentados = 1
-                    raw_hb = self.enviar_comando_raw("21A2", timeout=0.6)
+                    raw_hb = self.enviar_comando_raw("21A2", timeout=0.35)
                     if self.parse_bytes_kwp(raw_hb, "21A2"):
                         comandos_validos = 1
 
                 if comandos_validos == 0:
                     ciclos_sem_resposta += 1
-                    if ciclos_sem_resposta >= 4:
+                    if ciclos_sem_resposta >= 5:
                         self.rodando = False
                         Clock.schedule_once(
                             lambda dt: self._tratar_perda_conexao("ECU DESCONECTADA (CHAVE DESLIGADA / SEM RESPOSTA)")
                         )
                         break
-                    time.sleep(0.12)
+                    time.sleep(0.08)
                     continue
                 else:
                     ciclos_sem_resposta = 0
@@ -1026,7 +1033,7 @@ class TR4EngineMixin:
                 except Exception:
                     pass
             Clock.schedule_once(self.atualizar_interface)
-            time.sleep(0.08 if self.modo_simulacao else 0.005)
+            time.sleep(0.08 if self.modo_simulacao else 0.002)
 
     def _atualizar_visual_alerta(self, alerta):
         ativo = bool(alerta) and self.estado_conexao in ("CONECTADO", "SIMULACAO")
@@ -1061,7 +1068,10 @@ class TR4EngineMixin:
 
         if hasattr(self, "graficos_lista") and hasattr(self, "pids_graf"):
             for idx, graf in enumerate(self.graficos_lista):
-                val = self.valores_atuais.get(itemgetter(idx)(self.pids_graf))
+                pid_g = itemgetter(idx)(self.pids_graf)
+                if not pid_g:
+                    continue
+                val = self.valores_atuais.get(pid_g)
                 if isinstance(val, (int, float)):
                     graf.adicionar_ponto(val)
 
@@ -1089,6 +1099,7 @@ class TR4EngineMixin:
             self._atualizar_status(f"ECU CONECTADA | K-LINE ATIVO{rec_tag}", (0.2, 0.95, 0.45, 1))
         elif self.estado_conexao == "SIMULACAO":
             self._atualizar_status(f"SIMULACAO ATIVA | IAW 4AM{rec_tag}", (0.3, 0.9, 0.5, 1))
+
     def _obter_pasta_gravacao(self):
         pasta_dl = "/sdcard/Download"
         try:
@@ -1291,6 +1302,7 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
+
     def ler_info_ecu(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = (
@@ -1400,6 +1412,7 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
+
     def apagar_dtcs(self, *args):
         if not self.modo_simulacao and (not self.rodando or not self.bt_out or not self.bt_in):
             self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ou SIMULACAO primeiro."
@@ -1493,6 +1506,7 @@ class TR4EngineMixin:
         self.rodando = False
         self.lbl_eng.text = "Encerrando sessao atual e buscando modulos no Pino 7...\n\nAguarde ~20 segundos..."
         threading.Thread(target=self._buscar_modulos_thread, daemon=True).start()
+
     def _buscar_modulos_thread(self):
         time.sleep(0.35)
         self.enviar_comando_raw("82", timeout=1.0)
