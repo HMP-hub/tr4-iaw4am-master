@@ -119,6 +119,7 @@ class CardPID(BoxLayout):
             self.app_ref._reconstruir_cards_painel()
             return True
         return super().on_touch_up(touch)
+
 class GraficoRealtime(Widget):
     def __init__(self, cor_linha=(0.2, 0.85, 0.45, 1), max_pontos=90, **kwargs):
         super().__init__(**kwargs)
@@ -230,6 +231,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
             self._cor_borda_alerta = Color(1.0, 0.12, 0.12, 0.0)
             self._linha_borda_alerta = Line(rectangle=(0, 0, 100, 100), width=dp(4.5))
         root.bind(pos=self._atualizar_retangulo_borda, size=self._atualizar_retangulo_borda)
+
         self.lbl_status = Label(
             text="DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)",
             size_hint_y=None,
@@ -350,6 +352,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
             btn.background_color = (0.16, 0.52, 0.78, 1) if k == nome_scr else (0.18, 0.21, 0.27, 1)
         if nome_scr == "boletim":
             self.atualizar_tela_boletim()
+
     def _criar_tela_painel(self):
         scr = Screen(name="painel")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
@@ -474,6 +477,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
             card.add_widget(rodape)
             self.grid_painel.add_widget(card)
             self.cards_ui[pid_id] = (lbl_val, lbl_min, lbl_max, p["unidade"])
+
     def _criar_tela_pids(self):
         scr = Screen(name="pids")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
@@ -561,7 +565,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
                 self.checks_pids[pid_id].active = novo
         self._reconstruir_cards_painel()
 
-        def _criar_tela_grafico(self):
+    def _criar_tela_grafico(self):
         scr = Screen(name="grafico")
         box = BoxLayout(orientation="vertical", spacing=dp(4))
 
