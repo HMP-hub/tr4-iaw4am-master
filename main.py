@@ -561,13 +561,16 @@ class TR4ScannerApp(App, TR4EngineMixin):
                 self.checks_pids[pid_id].active = novo
         self._reconstruir_cards_painel()
 
-    def _criar_tela_grafico(self):
+        def _criar_tela_grafico(self):
         scr = Screen(name="grafico")
         box = BoxLayout(orientation="vertical", spacing=dp(4))
 
-        opcoes = [p["nome"] for p in PIDS_DB]
-        self.mapa_spinner_pid = {p["nome"]: p["id"] for p in PIDS_DB}
-        self.pids_graf = ["LAMBDA_1", "STFT", "MAP"]
+        opcoes = ["Nenhum"] + [p["nome"] for p in PIDS_DB]
+        self.mapa_spinner_pid = {"Nenhum": None}
+        for p in PIDS_DB:
+            self.mapa_spinner_pid[p["nome"]] = p["id"]
+
+        self.pids_graf = ["LAMBDA_1", None, None]
         self.graficos_lista = []
         cores = [
             (0.22, 0.88, 0.48, 1),
@@ -577,7 +580,10 @@ class TR4ScannerApp(App, TR4EngineMixin):
 
         for idx in range(3):
             pid_ini = itemgetter(idx)(self.pids_graf)
-            texto_ini = next((k for k, v in self.mapa_spinner_pid.items() if v == pid_ini), itemgetter(0)(opcoes))
+            if pid_ini is None:
+                texto_ini = "Nenhum"
+            else:
+                texto_ini = next((k for k, v in self.mapa_spinner_pid.items() if v == pid_ini), "Nenhum")
             sp = Spinner(
                 text=texto_ini,
                 values=opcoes,
@@ -589,6 +595,8 @@ class TR4ScannerApp(App, TR4EngineMixin):
                 background_color=(0.18, 0.24, 0.34, 1),
             )
             graf = GraficoRealtime(cor_linha=itemgetter(idx)(cores))
+            if pid_ini is None:
+                graf.lbl_info.text = "Grafico desativado (selecione um PID acima)"
             sp.bind(text=lambda inst, txt, i=idx, g=graf: self._trocar_pid_grafico(i, txt, g))
             self.graficos_lista.append(graf)
             box.add_widget(sp)
@@ -599,13 +607,16 @@ class TR4ScannerApp(App, TR4EngineMixin):
 
     def _trocar_pid_grafico(self, idx, texto_sel, graf_widget):
         pid_id = self.mapa_spinner_pid.get(texto_sel)
-        if pid_id:
-            self.pids_graf[idx] = pid_id
-            self.selecionados[pid_id] = True
-            if pid_id in self.checks_pids:
-                self.checks_pids[pid_id].active = True
-            self._reconstruir_cards_painel()
-            graf_widget.limpar()
+        self.pids_graf[idx] = pid_id
+        graf_widget.limpar()
+        if pid_id is None:
+            graf_widget.lbl_info.text = "Grafico desativado (selecione um PID acima)"
+            return
+        self.selecionados[pid_id] = True
+        if pid_id in self.checks_pids:
+            self.checks_pids[pid_id].active = True
+        self._reconstruir_cards_painel()
+
     def _criar_tela_log(self):
         scr = Screen(name="log")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
