@@ -45,7 +45,7 @@ def _calc_ltft_2154(b):
     v = _u16(b, 0)
     if v is None or v == 0:
         return None
-    return round(((v - 1638.0) / 1638.0) * 100.0, 1)
+    return round(((1638.0 - v) / 1638.0) * 100.0, 1)
 
 
 def _calc_etanol(b):
