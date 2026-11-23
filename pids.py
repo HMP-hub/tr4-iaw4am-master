@@ -74,7 +74,6 @@ def _calc_avanco(b):
 
 
 def _calc_knock_ret_cil(b, idx):
-    # Signed 16-bit: valores > 0 indicam atraso real por detonacao (0.25 deg/bit); valores <= 0 sao repouso/WOT base
     v = _s16(b, idx)
     if v is None:
         return None
@@ -83,7 +82,6 @@ def _calc_knock_ret_cil(b, idx):
 
 
 def _calc_knock_compilado(b):
-    # Pior atraso de detonacao entre os 4 cilindros (bytes 6..13 de 21A3)
     pior = 0
     achou = False
     for idx in (6, 8, 10, 12):
@@ -97,8 +95,8 @@ def _calc_knock_compilado(b):
     return round(-pior * 0.25, 2)
 
 
-def _calc_knock_noise_v(b):
-    raw16 = _u16(b, 0)
+def _calc_knock_noise_v(b, idx=0):
+    raw16 = _u16(b, idx)
     if raw16 is None:
         return None
     return round((raw16 / 1023.0) * 5.0, 2)
@@ -124,7 +122,7 @@ PIDS_DB = [
         "min": -35,
         "max": 35,
         "calc": _calc_stft_a4,
-        "sim": lambda t: round(3.8 * math.sin(t * 1.4), 1),
+        "sim": lambda t: round(-3.8 * math.sin(t * 1.4), 1),
     },
     {
         "id": "LTFT",
@@ -136,7 +134,7 @@ PIDS_DB = [
         "min": -35,
         "max": 35,
         "calc": _calc_ltft_2154,
-        "sim": lambda t: 2.6,
+        "sim": lambda t: -2.6,
     },
     {
         "id": "LAMBDA_1",
@@ -235,6 +233,18 @@ PIDS_DB = [
         "sim": lambda t: 0.0,
     },
     {
+        "id": "KNOCK_NOISE",
+        "nome": "Sinal Sensor Knock (V)",
+        "unidade": "V",
+        "cmd": "2168",
+        "rapido": True,
+        "conf": "ok",
+        "min": 0.0,
+        "max": 5.0,
+        "calc": lambda b: _calc_knock_noise_v(b, 0),
+        "sim": lambda t: round(1.35 + 0.10 * abs(math.sin(t * 2.5)), 2),
+    },
+    {
         "id": "VEL",
         "nome": "Velocidade",
         "unidade": "km/h",
@@ -282,7 +292,6 @@ PIDS_DB = [
         "calc": lambda b: _calc_knock_ret_cil(b, 8),
         "sim": lambda t: 0.0,
     },
-
     {
         "id": "KNOCK_CIL3",
         "nome": "Atraso Knock Cilindro 3",
@@ -307,17 +316,54 @@ PIDS_DB = [
         "calc": lambda b: _calc_knock_ret_cil(b, 12),
         "sim": lambda t: 0.0,
     },
+
     {
-        "id": "KNOCK_NOISE",
-        "nome": "Sinal Sensor Knock (V)",
+        "id": "KNOCK_V_CIL1",
+        "nome": "Ruido Knock Cilindro 1",
         "unidade": "V",
-        "cmd": "2168",
-        "rapido": True,
+        "cmd": "21A3",
+        "rapido": False,
         "conf": "ok",
         "min": 0.0,
         "max": 5.0,
-        "calc": _calc_knock_noise_v,
-        "sim": lambda t: round(0.95 + 0.10 * abs(math.sin(t * 2.5)), 2),
+        "calc": lambda b: _calc_knock_noise_v(b, 14),
+        "sim": lambda t: 0.30,
+    },
+    {
+        "id": "KNOCK_V_CIL2",
+        "nome": "Ruido Knock Cilindro 2",
+        "unidade": "V",
+        "cmd": "21A3",
+        "rapido": False,
+        "conf": "ok",
+        "min": 0.0,
+        "max": 5.0,
+        "calc": lambda b: _calc_knock_noise_v(b, 16),
+        "sim": lambda t: 0.29,
+    },
+    {
+        "id": "KNOCK_V_CIL3",
+        "nome": "Ruido Knock Cilindro 3",
+        "unidade": "V",
+        "cmd": "21A3",
+        "rapido": False,
+        "conf": "ok",
+        "min": 0.0,
+        "max": 5.0,
+        "calc": lambda b: _calc_knock_noise_v(b, 18),
+        "sim": lambda t: 0.31,
+    },
+    {
+        "id": "KNOCK_V_CIL4",
+        "nome": "Ruido Knock Cilindro 4",
+        "unidade": "V",
+        "cmd": "21A3",
+        "rapido": False,
+        "conf": "ok",
+        "min": 0.0,
+        "max": 5.0,
+        "calc": lambda b: _calc_knock_noise_v(b, 20),
+        "sim": lambda t: 0.30,
     },
     {
         "id": "CORR_IGN",
@@ -464,18 +510,6 @@ PIDS_DB = [
         "sim": lambda t: 1.0,
     },
     {
-        "id": "MARCHA_IND",
-        "nome": "Relacao Marcha Estimada",
-        "unidade": "Code",
-        "cmd": "2161",
-        "rapido": False,
-        "conf": "ok",
-        "min": 0,
-        "max": 10,
-        "calc": lambda b: _num(_u16(b, 0), 1, 0),
-        "sim": lambda t: 3.0,
-    },
-        {
         "id": "MARCHA_IND",
         "nome": "Relacao Marcha Estimada",
         "unidade": "Code",
