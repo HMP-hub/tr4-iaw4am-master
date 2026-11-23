@@ -38,7 +38,7 @@ def _calc_stft_a4(b):
     a = _u8(b, 8)
     if a is None:
         return None
-    return round(((a - 156.0) / 156.0) * 100.0, 1)
+    return round(((156.0 - a) / 156.0) * 100.0, 1)
 
 
 def _calc_ltft_2154(b):
