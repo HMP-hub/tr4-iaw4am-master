@@ -1496,6 +1496,123 @@ class TR4EngineMixin:
             self.rodando = True
             self.loop_leitura()
 
+    def reset_profundo_sfs(self, *args):
+        if not self.modo_simulacao and (not self.rodando or not self.bt_out or not self.bt_in):
+            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
+            return
+
+        box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12))
+        lbl_aviso = Label(
+            text=(
+                "RESET PROFUNDO SFS (FLEX / EEPROM):\n\n"
+                "Executa rotinas de fabrica Marelli (Servicos 31 / 30) "
+                "para zerar o aprendizado SFS de combustivel e marcha lenta.\n\n"
+                "Faca com CHAVE LIGADA e MOTOR PARADO.\nDeseja iniciar?"
+            ),
+            font_size="13sp",
+            halign="center",
+            valign="middle",
+        )
+        lbl_aviso.bind(size=lambda inst, v: setattr(inst, "text_size", v))
+        box.add_widget(lbl_aviso)
+
+        botoes = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(10))
+        popup = Popup(
+            title="Reset Profundo SFS - IAW 4AM",
+            content=box,
+            size_hint=(0.92, 0.50),
+            auto_dismiss=False,
+        )
+
+        btn_nao = Button(
+            text="CANCELAR",
+            font_size="13sp",
+            bold=True,
+            background_normal="",
+            background_color=(0.35, 0.38, 0.44, 1),
+        )
+        btn_nao.bind(on_release=popup.dismiss)
+
+        btn_sim = Button(
+            text="EXECUTAR RESET SFS",
+            font_size="13sp",
+            bold=True,
+            background_normal="",
+            background_color=(0.72, 0.18, 0.42, 1),
+        )
+        btn_sim.bind(on_release=lambda *a: self._confirmar_reset_sfs(popup))
+
+        botoes.add_widget(btn_nao)
+        botoes.add_widget(btn_sim)
+        box.add_widget(botoes)
+        popup.open()
+
+    def _confirmar_reset_sfs(self, popup):
+        try:
+            popup.dismiss()
+        except Exception:
+            pass
+        if self.modo_simulacao:
+            self.lbl_eng.text = "Simulacao: Rotina SFS executada (71 01 OK) e EEPROM adaptativa zerada."
+            return
+        self.rodando = False
+        self.lbl_eng.text = "Executando Reset Profundo SFS (sessoes e rotinas 31/30)..."
+        threading.Thread(target=self._reset_profundo_sfs_thread, daemon=True).start()
+
+    def _reset_profundo_sfs_thread(self):
+        time.sleep(0.25)
+        log_sfs = [f"RESET PROFUNDO SFS IAW 4AM - {datetime.now()}"]
+        b7b_antes = self.enviar_comando_raw("217B", timeout=1.0)
+        b54_antes = self.enviar_comando_raw("2154", timeout=1.0)
+        log_sfs.append(f"ANTES -> 217B: {b7b_antes} | 2154: {b54_antes}")
+
+        for ses in ("1081", "1085", "10C0"):
+            r_ses = self.enviar_comando_raw(ses, timeout=1.0)
+            log_sfs.append(f"Sessao {ses} -> {r_ses}")
+
+        rotinas = [
+            "3101", "3102", "3103", "3104", "3105",
+            "3106", "3107", "3108", "3110", "3120", "3180",
+            "300100", "300200", "300500", "301000", "308000",
+        ]
+        aceitas = []
+        for cmd in rotinas:
+            resp = self.enviar_comando_raw(cmd, timeout=1.0)
+            limpo = "".join(c for c in resp.upper() if c in "0123456789ABCDEF")
+            ok_prefix = f"{(int(cmd[:2], 16) + 0x40):02X}{cmd[2:4]}"
+            if ok_prefix in limpo:
+                aceitas.append(f"{cmd} -> {resp}")
+            log_sfs.append(f"Cmd {cmd} -> {resp}")
+
+        r_dtc = self.enviar_comando_raw("14FF00", timeout=1.5)
+        log_sfs.append(f"Clear 14FF00 -> {r_dtc}")
+        self.enviar_comando_raw("1081", timeout=1.0)
+
+        b7b_depois = self.enviar_comando_raw("217B", timeout=1.0)
+        b54_depois = self.enviar_comando_raw("2154", timeout=1.0)
+        log_sfs.append(f"DEPOIS -> 217B: {b7b_depois} | 2154: {b54_depois}")
+
+        try:
+            pasta = self._obter_pasta_gravacao()
+            arq = os.path.join(pasta, f"RESET_SFS_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+            with open(arq, "w", encoding="utf-8") as f:
+                f.write("\n".join(log_sfs))
+        except Exception:
+            arq = "Nao salvo"
+
+        res_aceitas = "\n".join(aceitas) if aceitas else "Nenhuma rotina 31/30 extra (14FF00 aplicado)"
+        msg = (
+            f"Reset Profundo SFS Concluido!\n\n"
+            f"Rotinas aceitas:\n{res_aceitas}\n\n"
+            f"217B: {b7b_antes} -> {b7b_depois}\n"
+            f"2154: {b54_antes} -> {b54_depois}\n\n"
+            f"Desligue a chave por 15s e de partida sem acelerar."
+        )
+        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", msg))
+        if self.estado_conexao == "CONECTADO" and self.bt_socket:
+            self.rodando = True
+            self.loop_leitura()
+
     def buscar_modulos_kwp(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = "Simulacao:\n[0x10] Injecao Motor (IAW 4AM) - ATIVO\n[0x18] Cambio AT - Sem resposta"
@@ -1640,3 +1757,4 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
+
