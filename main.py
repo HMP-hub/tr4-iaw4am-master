@@ -816,7 +816,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
         scr = Screen(name="eng")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
 
-        scroll = ScrollView(size_hint_y=0.44, bar_width=dp(6))
+        scroll = ScrollView(size_hint_y=0.40, bar_width=dp(6))
         self.lbl_eng = Label(
             text="Diagnostico Avancado KWP2000 - ECU IAW 4AM\n\nSelecione uma operacao abaixo:",
             font_size="13sp",
@@ -830,10 +830,11 @@ class TR4ScannerApp(App, TR4EngineMixin):
         scroll.add_widget(self.lbl_eng)
         box.add_widget(scroll)
 
-        grid_btns = GridLayout(cols=2, spacing=dp(8), size_hint_y=0.56)
+        grid_btns = GridLayout(cols=2, spacing=dp(7), size_hint_y=0.60)
         botoes_eng = [
             ("LER FALHAS (DTC)", (0.12, 0.46, 0.78, 1), self.ler_dtcs),
             ("APAGAR FALHAS +\nRESET ADAPTATIVO", (0.82, 0.38, 0.12, 1), self.apagar_dtcs),
+            ("RESET PROFUNDO\nSFS / EEPROM", (0.72, 0.18, 0.42, 1), self.reset_profundo_sfs),
             ("INFO ECU E ODOMETRO", (0.42, 0.24, 0.64, 1), self.ler_info_ecu),
             ("BUSCAR MODULOS", (0.20, 0.48, 0.60, 1), self.buscar_modulos_kwp),
             ("CAPTURAR CALIBRACAO\n(4 ESTADOS + MODO 01)", (0.08, 0.62, 0.58, 1), self.capturar_calibracao_ecu),
@@ -844,7 +845,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
         for titulo, cor, callback in botoes_eng:
             btn = Button(
                 text=titulo,
-                font_size="12sp",
+                font_size="11.5sp",
                 bold=True,
                 halign="center",
                 background_normal="",
@@ -860,3 +861,4 @@ class TR4ScannerApp(App, TR4EngineMixin):
 
 if __name__ == "__main__":
     TR4ScannerApp().run()
+
