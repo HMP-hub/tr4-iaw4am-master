@@ -1496,7 +1496,7 @@ class TR4EngineMixin:
             self.rodando = True
             self.loop_leitura()
 
-    def reset_profundo_sfs(self, *args):
+        def reset_profundo_sfs(self, *args):
         if not self.modo_simulacao and (not self.rodando or not self.bt_out or not self.bt_in):
             self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
             return
@@ -1506,7 +1506,7 @@ class TR4EngineMixin:
             text=(
                 "RESET PROFUNDO SFS (FLEX / EEPROM):\n\n"
                 "Executa rotinas de fabrica Marelli (Servicos 31 / 30) "
-                "para zerar o aprendizado SFS de combustivel e marcha lenta.\n\n"
+                "e consulta niveis de seguranca (Seed 27).\n\n"
                 "Faca com CHAVE LIGADA e MOTOR PARADO.\nDeseja iniciar?"
             ),
             font_size="13sp",
@@ -1553,13 +1553,13 @@ class TR4EngineMixin:
         except Exception:
             pass
         if self.modo_simulacao:
-            self.lbl_eng.text = "Simulacao: Rotina SFS executada (71 01 OK) e EEPROM adaptativa zerada."
+            self.lbl_eng.text = "Simulacao: Rotina SFS executada e EEPROM adaptativa zerada."
             return
         self.rodando = False
-        self.lbl_eng.text = "Executando Reset Profundo SFS (sessoes e rotinas 31/30)..."
+        self.lbl_eng.text = "Executando Reset Profundo SFS e consulta de Seed (1085)..."
         threading.Thread(target=self._reset_profundo_sfs_thread, daemon=True).start()
 
-        def _reset_profundo_sfs_thread(self):
+    def _reset_profundo_sfs_thread(self):
         time.sleep(0.25)
         log_sfs = [f"RESET PROFUNDO SFS IAW 4AM - {datetime.now()}"]
         b7b_antes = self.enviar_comando_raw("217B", timeout=1.0)
@@ -1752,4 +1752,3 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
-
