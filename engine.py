@@ -1543,7 +1543,7 @@ class TR4EngineMixin:
         self.lbl_eng.text = "Executando Reset Profundo SFS e consulta de Seed (1085)..."
         threading.Thread(target=self._reset_profundo_sfs_thread, daemon=True).start()
 
-        def _reset_profundo_sfs_thread(self):
+            def _reset_profundo_sfs_thread(self):
         time.sleep(0.25)
         log_sfs = [f"RESET SFS (SESSAO 1081 / LID 3101) - {datetime.now()}"]
 
@@ -1551,7 +1551,11 @@ class TR4EngineMixin:
         b7b_antes = self.enviar_comando_raw("217B", timeout=1.0)
         b54_antes = self.enviar_comando_raw("2154", timeout=1.0)
         b_a2 = self.parse_bytes_kwp(self.enviar_comando_raw("21A2", timeout=1.0), "21A2")
-        ect_atual = (b_a2[6] << 8 | b_a2[7]) - 40 if len(b_a2) >= 8 else -1
+        if len(b_a2) >= 8:
+            e0, e1 = itemgetter(6, 7)(b_a2)
+            ect_atual = ((e0 << 8) | e1) - 40
+        else:
+            ect_atual = -1
         log_sfs.append(f"ANTES (ECT={ect_atual}C) -> 217B: {b7b_antes} | 2154: {b54_antes}")
 
         r_dtc_pre = self.enviar_comando_raw("1800FF00", timeout=1.2)
@@ -1579,7 +1583,10 @@ class TR4EngineMixin:
         if "7101" in limpo_31:
             status_txt = "SUCESSO! Rotina 3101 ACEITA (71 01)!"
         elif "7F3122" in limpo_31:
-            status_txt = f"ECU pediu condicao termica (7F 31 22 com ECT={ect_atual}C).\nRepita com motor quente (>=80 C) desligado e chave ON!"
+            status_txt = (
+                f"ECU pediu condicao termica (7F 31 22 com ECT={ect_atual}C).\n"
+                f"Repita com motor quente (>=80 C) desligado e chave ON!"
+            )
         else:
             status_txt = f"Retorno 3101: {r_3101}"
 
