@@ -1,44 +1,67 @@
 # coding: utf-8
-# Mapa homologado da ECU Magneti Marelli IAW 4AM (Pajero TR4 2.0 16V Flex), KWP2000 modo 21.
 import math
+from operator import itemgetter
 
 
 def _u16(b, idx=0):
     if len(b) < idx + 2:
         return None
-    return (b[idx] << 8) | b[idx + 1]
-
-
-def _s16(b, idx=0):
-    v = _u16(b, idx)
-    if v is None:
-        return None
-    return v - 65536 if v >= 32768 else v
+    b0, b1 = itemgetter(idx, idx + 1)(b)
+    return (b0 << 8) | b1
 
 
 def _u8(b, idx=0):
-    if len(b) <= idx:
+    if len(b) < idx + 1:
         return None
-    return b[idx]
+    return itemgetter(idx)(b)
 
 
-def _num(v, fator=1.0, casas=1):
-    return round(v * fator, casas) if v is not None else 0.0
-
-
-def _calc_tps(b):
+def _calc_tps_a2(b):
     v = _u16(b, 8)
     if v is None:
-        return 0.0
-    pct = ((v - 1.0) / 835.0) * 100.0
-    return round(max(0.0, min(100.0, pct)), 1)
-
-
-def _calc_stft_a4(b):
-    a = _u8(b, 8)
-    if a is None:
         return None
-    return round(((156.0 - a) / 156.0) * 100.0, 1)
+    pct = ((v - 1.0) / 835.0) * 100.0
+    if pct < 0.35:
+        return 0.0
+    return round(min(100.0, pct), 1)
+
+
+def _calc_avanco_a2(b):
+    v = _u16(b, 2)
+    if v is None:
+        return None
+    return round((v - 128.0) * 0.375, 1)
+
+
+def _calc_knock_2167(b, idx):
+    v = _u8(b, idx)
+    if v is None:
+        return None
+    return round(-v * 0.25, 2)
+
+
+def _calc_knock_max_2167(b):
+    if len(b) < 4:
+        return None
+    vals = [_calc_knock_2167(b, i) for i in range(4)]
+    validos = [x for x in vals if x is not None]
+    if not validos:
+        return None
+    return min(validos)
+
+
+def _calc_knock_v_2168(b, idx):
+    v = _u8(b, idx)
+    if v is None:
+        return None
+    return round((v / 255.0) * 5.0, 2)
+
+
+def _calc_stft_2152(b):
+    v = _u16(b, 0)
+    if v is None or v == 0:
+        return None
+    return round(((128.0 - v) / 156.0) * 100.0, 1)
 
 
 def _calc_ltft_2154(b):
@@ -51,489 +74,358 @@ def _calc_ltft_2154(b):
     return val
 
 
-def _calc_etanol(b):
+def _calc_etanol_pct_217b(b):
     v = _u16(b, 0)
     if v is None:
         return None
-    val = 27.0 + ((132.0 - v) * 1.736)
-    return round(max(0.0, min(100.0, val)), 1)
+    pct = max(0.0, min(100.0, round((v / 488.9) * 100.0, 0)))
+    return int(pct)
 
 
-def _calc_temp(b, idx):
-    v = _u16(b, idx)
-    if v is None:
-        return 0.0
-    return round(float(v - 40), 0)
-
-
-def _calc_avanco(b):
-    v = _s16(b, 14)
-    if v is None:
+def _calc_af_217b(b):
+    pct = _calc_etanol_pct_217b(b)
+    if pct is None:
         return None
-    deg = round(v * 0.125, 1)
-    if deg < -15.0 or deg > 55.0:
+    af = 14.7 - (pct / 100.0) * (14.7 - 9.0)
+    return round(af, 1)
+
+
+def _calc_tipo_comb_217b(b):
+    pct = _calc_etanol_pct_217b(b)
+    if pct is None:
         return None
-    return deg
-
-
-def _calc_knock_ret_cil(b, idx):
-    v = _s16(b, idx)
-    if v is None:
-        return None
-    ret = max(0, v)
-    return round(-ret * 0.25, 2)
-
-
-def _calc_knock_compilado(b):
-    pior = 0
-    achou = False
-    for idx in (6, 8, 10, 12):
-        v = _s16(b, idx)
-        if v is not None:
-            achou = True
-            if v > pior:
-                pior = v
-    if not achou:
-        return None
-    return round(-pior * 0.25, 2)
-
-
-def _calc_knock_noise_v(b, idx=0):
-    raw16 = _u16(b, idx)
-    if raw16 is None:
-        return None
-    return round((raw16 / 1023.0) * 5.0, 2)
-
-
-def _calc_corr_ign(b):
-    v = _s16(b, 0)
-    if v is None:
-        return None
-    deg = round(v * 0.125, 1)
-    if deg < -25.0 or deg > 25.0:
-        return None
-    return deg
+    if pct <= 3:
+        return f"E{pct:02d} (GAS)"
+    if pct >= 95:
+        return f"E{pct} (ALC)"
+    return f"E{pct:02d} (FLEX)"
 
 PIDS_DB = [
     {
         "id": "STFT",
-        "nome": "Integrador Lambda (STFT)",
+        "nome": "Ajuste Curto (STFT)",
+        "cmd": "2152",
         "unidade": "%",
-        "cmd": "21A4",
         "rapido": True,
-        "conf": "ok",
-        "min": -35,
-        "max": 35,
-        "calc": _calc_stft_a4,
-        "sim": lambda t: round(-3.8 * math.sin(t * 1.4), 1),
+        "calc": _calc_stft_2152,
+        "sim": lambda t: round(2.5 * math.sin(t * 1.1), 1),
     },
     {
         "id": "LTFT",
-        "nome": "Adaptativo Mistura (LTFT)",
-        "unidade": "%",
+        "nome": "Ajuste Longo (LTFT)",
         "cmd": "2154",
+        "unidade": "%",
         "rapido": True,
-        "conf": "ok",
-        "min": -35,
-        "max": 35,
         "calc": _calc_ltft_2154,
-        "sim": lambda t: -2.6,
+        "sim": lambda t: -1.3,
     },
     {
         "id": "LAMBDA_1",
-        "nome": "Sonda Lambda Pre-Cat",
+        "nome": "Sonda Pre-Cat",
+        "cmd": "21A4",
         "unidade": "mV",
-        "cmd": "2145",
         "rapido": True,
-        "conf": "ok",
-        "min": 0,
-        "max": 1000,
-        "calc": lambda b: _num(_u16(b, 0), 1, 0),
-        "sim": lambda t: round(450 + 360 * math.sin(t * 3.5), 0),
+        "calc": lambda b: int(round((_u16(b, 0) / 1023.0) * 5000.0)) if _u16(b, 0) is not None else None,
+        "sim": lambda t: int(450 + 380 * math.sin(t * 3.2)),
     },
     {
         "id": "TI_EFETIVO",
-        "nome": "Tempo de Injecao",
+        "nome": "Tempo Injecao",
+        "cmd": "21A5",
         "unidade": "ms",
-        "cmd": "21A0",
         "rapido": True,
-        "conf": "ok",
-        "min": 0,
-        "max": 25,
-        "calc": lambda b: _num(_u16(b, 16), 0.002, 2),
-        "sim": lambda t: round(2.35 + 0.15 * math.sin(t * 2.2), 2),
+        "calc": lambda b: round(_u16(b, 0) * 0.004, 2) if _u16(b, 0) is not None else None,
+        "sim": lambda t: round(2.55 + 0.35 * math.sin(t * 0.9), 2),
     },
     {
         "id": "RPM",
-        "nome": "Rotacao Motor (RPM)",
-        "unidade": "rpm",
+        "nome": "Rotacao (RPM)",
         "cmd": "21A2",
+        "unidade": "rpm",
         "rapido": True,
-        "conf": "ok",
-        "min": 0,
-        "max": 7000,
-        "calc": lambda b: _num(_u16(b, 0), 1, 0),
-        "sim": lambda t: round(755 + 20 * math.sin(t * 2.0), 0),
+        "calc": lambda b: _u16(b, 0),
+        "sim": lambda t: int(760 + 25 * math.sin(t * 1.7)),
     },
     {
         "id": "AVANCO",
-        "nome": "Avanco de Ignicao",
-        "unidade": "graus",
-        "cmd": "21A0",
+        "nome": "Avanco Ignicao",
+        "cmd": "21A2",
+        "unidade": "deg",
         "rapido": True,
-        "conf": "ok",
-        "min": -15,
-        "max": 55,
-        "calc": _calc_avanco,
-        "sim": lambda t: round(-5.5 + 1.2 * math.sin(t * 1.8), 1),
+        "calc": _calc_avanco_a2,
+        "sim": lambda t: round(-5.0 + 3.0 * math.sin(t * 1.2), 1),
     },
     {
         "id": "MAP",
-        "nome": "Pressao Coletor (MAP)",
+        "nome": "Pressao Coletor",
+        "cmd": "2131",
         "unidade": "kPa",
-        "cmd": "21A2",
         "rapido": True,
-        "conf": "ok",
-        "min": 10,
-        "max": 105,
-        "calc": lambda b: _num(_u16(b, 2), 0.1, 1),
-        "sim": lambda t: round(31.8 + 1.5 * math.sin(t * 2.0), 1),
+        "calc": lambda b: round(_u16(b, 0) / 10.0, 1) if _u16(b, 0) is not None else None,
+        "sim": lambda t: round(32.0 + 1.5 * math.cos(t * 1.3), 1),
     },
     {
         "id": "VBAT",
-        "nome": "Tensao da Bateria",
-        "unidade": "V",
+        "nome": "Tensao Bateria",
         "cmd": "21A2",
+        "unidade": "V",
         "rapido": True,
-        "conf": "ok",
-        "min": 9.0,
-        "max": 16.0,
-        "calc": lambda b: _num(_u16(b, 16), 0.1, 1),
-        "sim": lambda t: 14.1,
+        "calc": lambda b: round(_u16(b, 4) * 0.0704, 1) if _u16(b, 4) is not None else None,
+        "sim": lambda t: round(14.1 + 0.1 * math.sin(t * 0.5), 1),
     },
     {
         "id": "TPS",
-        "nome": "Posicao Borboleta (TPS)",
-        "unidade": "%",
+        "nome": "Posicao Borboleta",
         "cmd": "21A2",
+        "unidade": "%",
         "rapido": True,
-        "conf": "ok",
-        "min": 0,
-        "max": 100,
-        "calc": _calc_tps,
-        "sim": lambda t: round(12.0 + 8.0 * abs(math.sin(t * 0.8)), 1),
+        "calc": _calc_tps_a2,
+        "sim": lambda t: 0.0,
     },
     {
         "id": "KNOCK_MAX",
-        "nome": "Knock (4 Cilindros)",
-        "unidade": "graus",
-        "cmd": "21A3",
+        "nome": "Atraso Detonacao",
+        "cmd": "2167",
+        "unidade": "deg",
         "rapido": True,
-        "conf": "ok",
-        "min": -15.0,
-        "max": 0.0,
-        "calc": _calc_knock_compilado,
+        "calc": _calc_knock_max_2167,
         "sim": lambda t: 0.0,
     },
     {
         "id": "KNOCK_NOISE",
-        "nome": "Sinal Sensor Knock (V)",
-        "unidade": "V",
+        "nome": "Sinal Sensor Knock",
         "cmd": "2168",
-        "rapido": True,
-        "conf": "ok",
-        "min": 0.0,
-        "max": 5.0,
-        "calc": lambda b: _calc_knock_noise_v(b, 0),
-        "sim": lambda t: round(1.35 + 0.10 * abs(math.sin(t * 2.5)), 2),
+        "unidade": "V",
+        "rapido": False,
+        "calc": lambda b: round((_u16(b, 0) / 1023.0) * 5.0, 2) if _u16(b, 0) is not None else None,
+        "sim": lambda t: round(0.58 + 0.08 * abs(math.sin(t * 2.1)), 2),
     },
     {
         "id": "VEL",
         "nome": "Velocidade",
-        "unidade": "km/h",
         "cmd": "21A6",
-        "rapido": False,
-        "conf": "ok",
-        "min": 0,
-        "max": 200,
-        "calc": lambda b: _num(_u16(b, 2), 1, 0),
-        "sim": lambda t: round(max(0.0, 55.0 + 15.0 * math.sin(t * 0.3)), 0),
+        "unidade": "km/h",
+        "rapido": True,
+        "calc": lambda b: _u16(b, 2),
+        "sim": lambda t: 0,
     },
+
     {
         "id": "ECT",
-        "nome": "Temperatura Agua",
-        "unidade": "C",
+        "nome": "Temp. Agua",
         "cmd": "21A2",
+        "unidade": "C",
         "rapido": False,
-        "conf": "ok",
-        "min": -10,
-        "max": 125,
-        "calc": lambda b: _calc_temp(b, 6),
-        "sim": lambda t: round(84.0 + 1.5 * math.sin(t * 0.1), 0),
+        "calc": lambda b: round(float(_u16(b, 6) - 40), 1) if _u16(b, 6) is not None else None,
+        "sim": lambda t: round(min(92.0, 84.0 + t * 0.04), 1),
     },
     {
         "id": "KNOCK_CIL1",
-        "nome": "Atraso Knock Cilindro 1",
-        "unidade": "graus",
-        "cmd": "21A3",
+        "nome": "Retardo Cilindro 1",
+        "cmd": "2167",
+        "unidade": "deg",
         "rapido": False,
-        "conf": "ok",
-        "min": -15.0,
-        "max": 0.0,
-        "calc": lambda b: _calc_knock_ret_cil(b, 6),
+        "calc": lambda b: _calc_knock_2167(b, 0),
         "sim": lambda t: 0.0,
     },
     {
         "id": "KNOCK_CIL2",
-        "nome": "Atraso Knock Cilindro 2",
-        "unidade": "graus",
-        "cmd": "21A3",
+        "nome": "Retardo Cilindro 2",
+        "cmd": "2167",
+        "unidade": "deg",
         "rapido": False,
-        "conf": "ok",
-        "min": -15.0,
-        "max": 0.0,
-        "calc": lambda b: _calc_knock_ret_cil(b, 8),
+        "calc": lambda b: _calc_knock_2167(b, 1),
         "sim": lambda t: 0.0,
     },
     {
         "id": "KNOCK_CIL3",
-        "nome": "Atraso Knock Cilindro 3",
-        "unidade": "graus",
-        "cmd": "21A3",
+        "nome": "Retardo Cilindro 3",
+        "cmd": "2167",
+        "unidade": "deg",
         "rapido": False,
-        "conf": "ok",
-        "min": -15.0,
-        "max": 0.0,
-        "calc": lambda b: _calc_knock_ret_cil(b, 10),
+        "calc": lambda b: _calc_knock_2167(b, 2),
         "sim": lambda t: 0.0,
     },
     {
         "id": "KNOCK_CIL4",
-        "nome": "Atraso Knock Cilindro 4",
-        "unidade": "graus",
-        "cmd": "21A3",
+        "nome": "Retardo Cilindro 4",
+        "cmd": "2167",
+        "unidade": "deg",
         "rapido": False,
-        "conf": "ok",
-        "min": -15.0,
-        "max": 0.0,
-        "calc": lambda b: _calc_knock_ret_cil(b, 12),
+        "calc": lambda b: _calc_knock_2167(b, 3),
         "sim": lambda t: 0.0,
     },
-
     {
         "id": "KNOCK_V_CIL1",
-        "nome": "Ruido Knock Cilindro 1",
+        "nome": "Ruido Knock Cil 1",
+        "cmd": "2169",
         "unidade": "V",
-        "cmd": "21A3",
         "rapido": False,
-        "conf": "ok",
-        "min": 0.0,
-        "max": 5.0,
-        "calc": lambda b: _calc_knock_noise_v(b, 14),
-        "sim": lambda t: 0.30,
+        "calc": lambda b: _calc_knock_v_2168(b, 0),
+        "sim": lambda t: round(0.12 + 0.03 * abs(math.sin(t * 2.0)), 2),
     },
     {
         "id": "KNOCK_V_CIL2",
-        "nome": "Ruido Knock Cilindro 2",
+        "nome": "Ruido Knock Cil 2",
+        "cmd": "2169",
         "unidade": "V",
-        "cmd": "21A3",
         "rapido": False,
-        "conf": "ok",
-        "min": 0.0,
-        "max": 5.0,
-        "calc": lambda b: _calc_knock_noise_v(b, 16),
-        "sim": lambda t: 0.29,
+        "calc": lambda b: _calc_knock_v_2168(b, 1),
+        "sim": lambda t: round(0.12 + 0.03 * abs(math.cos(t * 2.1)), 2),
     },
     {
         "id": "KNOCK_V_CIL3",
-        "nome": "Ruido Knock Cilindro 3",
+        "nome": "Ruido Knock Cil 3",
+        "cmd": "2169",
         "unidade": "V",
-        "cmd": "21A3",
         "rapido": False,
-        "conf": "ok",
-        "min": 0.0,
-        "max": 5.0,
-        "calc": lambda b: _calc_knock_noise_v(b, 18),
-        "sim": lambda t: 0.31,
+        "calc": lambda b: _calc_knock_v_2168(b, 2),
+        "sim": lambda t: round(0.11 + 0.03 * abs(math.sin(t * 1.9)), 2),
     },
     {
         "id": "KNOCK_V_CIL4",
-        "nome": "Ruido Knock Cilindro 4",
+        "nome": "Ruido Knock Cil 4",
+        "cmd": "2169",
         "unidade": "V",
-        "cmd": "21A3",
         "rapido": False,
-        "conf": "ok",
-        "min": 0.0,
-        "max": 5.0,
-        "calc": lambda b: _calc_knock_noise_v(b, 20),
-        "sim": lambda t: 0.30,
+        "calc": lambda b: _calc_knock_v_2168(b, 3),
+        "sim": lambda t: round(0.12 + 0.03 * abs(math.cos(t * 2.2)), 2),
     },
     {
         "id": "CORR_IGN",
-        "nome": "Ajuste/Atraso Ponto Ignicao",
-        "unidade": "graus",
-        "cmd": "216A",
+        "nome": "Correcao Ignicao",
+        "cmd": "2165",
+        "unidade": "deg",
         "rapido": False,
-        "conf": "provavel",
-        "min": -20,
-        "max": 15,
-        "calc": _calc_corr_ign,
-        "sim": lambda t: -0.4,
+        "calc": lambda b: round((_u16(b, 0) - 256.0) * 0.5, 1) if _u16(b, 0) is not None else None,
+        "sim": lambda t: -1.0,
     },
     {
-        "id": "ETANOL_REAL",
-        "nome": "Etanol Aprendido (Flex)",
-        "unidade": "%",
+        "id": "MAPA_AF",
+        "nome": "Mapa Combustivel",
         "cmd": "217B",
+        "unidade": ":1 A/F",
         "rapido": False,
-        "conf": "provavel",
-        "min": 0,
-        "max": 100,
-        "calc": _calc_etanol,
-        "sim": lambda t: 27.0,
+        "calc": _calc_af_217b,
+        "sim": lambda t: 13.2,
     },
+    {
+        "id": "TIPO_COMB",
+        "nome": "Combustivel SFS",
+        "cmd": "217B",
+        "unidade": "",
+        "rapido": False,
+        "calc": _calc_tipo_comb_217b,
+        "sim": lambda t: "E27 (FLEX)",
+    },
+
     {
         "id": "CLOSED_LOOP",
-        "nome": "Status da Malha (Loop)",
-        "unidade": "Code",
-        "cmd": "2157",
+        "nome": "Status Malha",
+        "cmd": "2161",
+        "unidade": "st",
         "rapido": False,
-        "conf": "ok",
-        "min": 0,
-        "max": 16,
-        "calc": lambda b: float(_u8(b, 0)) if _u8(b, 0) is not None else None,
+        "calc": lambda b: round(_u16(b, 0) / 100.0, 1) if _u16(b, 0) is not None else None,
         "sim": lambda t: 4.0,
     },
     {
         "id": "IAT",
-        "nome": "Temperatura Ar Admissao",
-        "unidade": "C",
+        "nome": "Temp. Ar Admissao",
         "cmd": "21A2",
+        "unidade": "C",
         "rapido": False,
-        "conf": "ok",
-        "min": -10,
-        "max": 100,
-        "calc": lambda b: _calc_temp(b, 4),
-        "sim": lambda t: round(36.0 + 1.5 * math.sin(t * 0.15), 0),
+        "calc": lambda b: round(float(_u16(b, 10) - 40), 1) if _u16(b, 10) is not None else None,
+        "sim": lambda t: 44.0,
     },
     {
         "id": "IAC",
-        "nome": "Atuador Marcha Lenta (IAC)",
+        "nome": "Atuador Lenta (IAC)",
+        "cmd": "213A",
         "unidade": "passos",
-        "cmd": "21A2",
         "rapido": False,
-        "conf": "ok",
-        "min": 0,
-        "max": 200,
-        "calc": lambda b: _num(_u16(b, 14), 1, 0),
-        "sim": lambda t: 70.0,
+        "calc": lambda b: _u16(b, 0),
+        "sim": lambda t: 69,
     },
     {
         "id": "RPM_ALVO",
-        "nome": "Rotacao Alvo Lenta",
+        "nome": "RPM Alvo Lenta",
+        "cmd": "213B",
         "unidade": "rpm",
-        "cmd": "21A2",
         "rapido": False,
-        "conf": "ok",
-        "min": 0,
-        "max": 2000,
-        "calc": lambda b: _num(_u16(b, 12), 1, 0),
-        "sim": lambda t: 750.0,
+        "calc": lambda b: _u16(b, 0),
+        "sim": lambda t: 750,
     },
     {
         "id": "BARO",
         "nome": "Pressao Barometrica",
+        "cmd": "2147",
         "unidade": "kPa",
-        "cmd": "2160",
         "rapido": False,
-        "conf": "ok",
-        "min": 70,
-        "max": 105,
-        "calc": lambda b: _num(_u16(b, 0), 0.1, 1),
+        "calc": lambda b: round(_u16(b, 0) / 10.0, 1) if _u16(b, 0) is not None else None,
         "sim": lambda t: 98.5,
     },
     {
         "id": "CARGA",
-        "nome": "Fluxo / Carga Calculada",
-        "unidade": "idx",
-        "cmd": "21A0",
+        "nome": "Carga Motor",
+        "cmd": "2164",
+        "unidade": "raw",
         "rapido": False,
-        "conf": "provavel",
-        "min": 0,
-        "max": 500,
-        "calc": lambda b: _num(_u16(b, 18), 1, 0),
-        "sim": lambda t: 85.0,
+        "calc": lambda b: _u16(b, 0),
+        "sim": lambda t: int(90 + 15 * abs(math.sin(t))),
     },
     {
         "id": "TI_BASE",
         "nome": "Tempo Injecao Base",
+        "cmd": "216A",
         "unidade": "ms",
-        "cmd": "216B",
         "rapido": False,
-        "conf": "ok",
-        "min": 0,
-        "max": 25,
-        "calc": lambda b: _num(_u16(b, 0), 0.01, 2),
+        "calc": lambda b: round(_u16(b, 0) * 0.004, 2) if _u16(b, 0) is not None else None,
         "sim": lambda t: 1.80,
     },
     {
         "id": "REGIME_MOTOR",
-        "nome": "Regime (1=Par 2=Norm 4=Frio)",
-        "unidade": "Code",
-        "cmd": "21A1",
+        "nome": "Regime Operacao",
+        "cmd": "2160",
+        "unidade": "st",
         "rapido": False,
-        "conf": "ok",
-        "min": 0,
-        "max": 5,
-        "calc": lambda b: float(_u8(b, 14) or 0),
+        "calc": lambda b: round(_u16(b, 0) / 100.0, 1) if _u16(b, 0) is not None else None,
         "sim": lambda t: 2.0,
     },
     {
         "id": "ESTADO_MOTOR",
-        "nome": "Estado Motor (2=Par 4=Rod)",
-        "unidade": "Code",
-        "cmd": "21A6",
+        "nome": "Estado Funcionamento",
+        "cmd": "21A0",
+        "unidade": "st",
         "rapido": False,
-        "conf": "ok",
-        "min": 0,
-        "max": 5,
-        "calc": lambda b: float(_u8(b, 4) or 0),
+        "calc": lambda b: round(_u16(b, 0) / 100.0, 1) if _u16(b, 0) is not None else None,
         "sim": lambda t: 4.0,
     },
     {
         "id": "MOVIMENTO",
-        "nome": "Veiculo em Movimento (0/1)",
-        "unidade": "Ativo",
-        "cmd": "21A6",
+        "nome": "Status Movimento",
+        "cmd": "21A1",
+        "unidade": "st",
         "rapido": False,
-        "conf": "ok",
-        "min": 0,
-        "max": 1,
-        "calc": lambda b: 1.0 if (_u8(b, 5) or 0) > 0 else 0.0,
-        "sim": lambda t: 1.0,
+        "calc": lambda b: round(_u16(b, 0) / 100.0, 1) if _u16(b, 0) is not None else None,
+        "sim": lambda t: 0.0,
     },
     {
         "id": "MARCHA_IND",
-        "nome": "Relacao Marcha Estimada",
-        "unidade": "Code",
-        "cmd": "2161",
+        "nome": "Marcha Engatada",
+        "cmd": "21A7",
+        "unidade": "marcha",
         "rapido": False,
-        "conf": "ok",
-        "min": 0,
-        "max": 10,
-        "calc": lambda b: _num(_u16(b, 0), 1, 0),
-        "sim": lambda t: 3.0,
+        "calc": lambda b: _u16(b, 0),
+        "sim": lambda t: 0,
     },
     {
         "id": "FAN_STATUS",
-        "nome": "Eletroventilador (0=Off 1=On)",
-        "unidade": "Ativo",
-        "cmd": "2152",
+        "nome": "Ventoinha Radiador",
+        "cmd": "21A3",
+        "unidade": "st",
         "rapido": False,
-        "conf": "ok",
-        "min": 0,
-        "max": 1,
-        "calc": lambda b: 1.0 if (_u16(b, 0) or 0) > 0 else 0.0,
+        "calc": lambda b: round(_u16(b, 0) / 100.0, 1) if _u16(b, 0) is not None else None,
         "sim": lambda t: 0.0,
     },
 ]
+
