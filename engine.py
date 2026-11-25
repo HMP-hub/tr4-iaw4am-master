@@ -1060,7 +1060,7 @@ class TR4EngineMixin:
         for pid_id, widgets in self.cards_ui.items():
             lbl_val, lbl_min, lbl_max, unidade = widgets
             val = self.valores_atuais.get(pid_id, "--")
-            lbl_val.text = f"{val} {unidade}" if val != "--" else "--"
+            lbl_val.text = f"{val}" if val != "--" else "--"
             vmin = self.valores_min.get(pid_id, "--")
             vmax = self.valores_max.get(pid_id, "--")
             lbl_min.text = f"MIN: {vmin}"
