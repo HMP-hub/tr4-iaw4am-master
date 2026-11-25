@@ -343,7 +343,7 @@ PIDS_DB = [
         "cmd": "213A",
         "unidade": "passos",
         "rapido": False,
-        "calc": lambda b: _u16(b, 0),
+        "calc": _u16,
         "sim": lambda t: 69,
     },
     {
@@ -352,7 +352,7 @@ PIDS_DB = [
         "cmd": "213B",
         "unidade": "rpm",
         "rapido": False,
-        "calc": lambda b: _u16(b, 0),
+        "calc": _u16,
         "sim": lambda t: 750,
     },
     {
@@ -370,7 +370,7 @@ PIDS_DB = [
         "cmd": "2164",
         "unidade": "raw",
         "rapido": False,
-        "calc": lambda b: _u16(b, 0),
+        "calc": _u16,
         "sim": lambda t: int(90 + 15 * abs(math.sin(t))),
     },
     {
@@ -415,7 +415,7 @@ PIDS_DB = [
         "cmd": "21A7",
         "unidade": "marcha",
         "rapido": False,
-        "calc": lambda b: _u16(b, 0),
+        "calc": _u16,
         "sim": lambda t: 0,
     },
     {
