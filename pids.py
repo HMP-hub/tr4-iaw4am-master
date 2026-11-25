@@ -301,7 +301,7 @@ PIDS_DB = [
         "id": "MAPA_AF",
         "nome": "Mapa Combustivel",
         "cmd": "217B",
-        "unidade": ":1 A/F",
+        "unidade": ":1",
         "rapido": False,
         "calc": _calc_af_217b,
         "sim": lambda t: 13.2,
