@@ -197,7 +197,6 @@ class TR4EngineMixin:
         if isinstance(rpm, (int, float)) and rpm > t["rpm_max"]:
             t["rpm_max"] = rpm
 
-        # 1. Sistema de Arrefecimento
         if isinstance(ect, (int, float)) and ect > -5:
             if t["ect_ini"] is None:
                 t["ect_ini"] = ect
@@ -210,7 +209,6 @@ class TR4EngineMixin:
             if ect >= 98.0:
                 t["tempo_acima_98c"] += dt
 
-        # 2. Detonacao / Knock (Atraso em graus + Sinal bruto em Volts 2168)
         motor_rodando = isinstance(rpm, (int, float)) and rpm >= 650
         sob_carga = (isinstance(tps, (int, float)) and tps >= 12.0) or (isinstance(mp, (int, float)) and mp >= 52.0)
         k_max = self.valores_atuais.get("KNOCK_MAX")
@@ -250,7 +248,6 @@ class TR4EngineMixin:
             else:
                 t["knock_v_ativo_frame"] = False
 
-        # 3. Sonda Lambda Pre-Cat & Mistura
         quente = isinstance(ect, (int, float)) and ect >= 75.0
         if quente and motor_rodando:
             t["tempo_cl_quente"] += dt
@@ -281,7 +278,6 @@ class TR4EngineMixin:
         if pobre_wot:
             t["pobre_carga_eventos"] += 1
 
-        # 4. Marcha lenta aquecida
         em_lenta_quente = (
             isinstance(ect, (int, float)) and ect >= 80.0
             and isinstance(vel, (int, float)) and vel <= 1
@@ -302,7 +298,6 @@ class TR4EngineMixin:
                 t["avanco_lenta_soma"] += av
                 t["avanco_lenta_n"] += 1
 
-        # 5. Sistema de Carga
         if isinstance(vbat, (int, float)) and 7.0 <= vbat <= 16.5:
             if not motor_rodando:
                 if t["vbat_min_partida"] is None or vbat < t["vbat_min_partida"]:
@@ -313,7 +308,6 @@ class TR4EngineMixin:
                 if t["vbat_max"] is None or vbat > t["vbat_max"]:
                     t["vbat_max"] = vbat
 
-        # 6. Injecao & Cut-off
         em_cutoff = (
             isinstance(rpm, (int, float)) and rpm >= 1500
             and isinstance(tps, (int, float)) and tps <= 0.5
@@ -326,12 +320,10 @@ class TR4EngineMixin:
         else:
             t["cutoff_ativo_frame"] = False
 
-        # 7. Avanco maximo em carga
         if motor_rodando and isinstance(av, (int, float)) and -15.0 <= av <= 50.0:
             if t["avanco_max"] is None or av > t["avanco_max"]:
                 t["avanco_max"] = av
 
-        # Alertas visuais de risco (borda vermelha pulsante + banner superior)
         knock_v_critico = isinstance(kv_noise, (int, float)) and kv_noise > 2.80 and motor_rodando
         alerta = ""
         if isinstance(ect, (int, float)) and ect >= 99.0:
@@ -354,7 +346,6 @@ class TR4EngineMixin:
         dur_s = max(1, int(time.time() - t["inicio_ts"]))
         mins, segs = divmod(dur_s, 60)
 
-        # 1. Detonacao / Knock (Graus + Volts 2168)
         ev_k = t["knock_eventos"]
         pior_k = t["knock_pior_graus"]
         pior_c = t["knock_pior_cil"]
@@ -379,7 +370,6 @@ class TR4EngineMixin:
             + f"  - Eventos retardo sob carga: {ev_k} ocorrencia(s)"
         )
 
-        # 2. Sistema de Arrefecimento
         ect_ini = f"{t['ect_ini']:.0f} C" if t["ect_ini"] is not None else "--"
         ect_max = f"{t['ect_max']:.0f} C" if t["ect_max"] is not None else "--"
         if t["ect_max"] is None:
@@ -400,7 +390,6 @@ class TR4EngineMixin:
             f"  - Tempo ate 80 C: {t80_txt}  |  Tempo >= 98 C: {t['tempo_acima_98c']:.0f}s"
         )
 
-        # 3. Sonda Lambda Pre-Cat & Mistura
         taxa_sonda = (t["lambda_trocas"] / (t["tempo_cl_quente"] / 60.0)) if t["tempo_cl_quente"] >= 20.0 else None
         if taxa_sonda is None:
             diag_sonda = "Aguardando 20s+ em malha fechada quente (>= 75 C)"
@@ -423,7 +412,6 @@ class TR4EngineMixin:
             f"  - Alertas mistura pobre em carga alta: {t['pobre_carga_eventos']}"
         )
 
-        # 4. Vacuo Coletor & Marcha Lenta
         if t["map_lenta_n"] >= 3:
             map_med = t["map_lenta_soma"] / t["map_lenta_n"]
             iac_med = (t["iac_lenta_soma"] / t["iac_lenta_n"]) if t["iac_lenta_n"] > 0 else 0
@@ -441,7 +429,6 @@ class TR4EngineMixin:
         else:
             det_lenta = "  - Aguardando marcha lenta estabilizada com motor >= 80 C."
 
-        # 5. Sistema de Carga
         if t["vbat_n"] > 0:
             vbat_med = t["vbat_soma"] / t["vbat_n"]
             vbat_max = t["vbat_max"] or vbat_med
@@ -465,7 +452,6 @@ class TR4EngineMixin:
         else:
             det_bat = "  - Aguardando amostras com motor em funcionamento."
 
-        # 6. Sistema de Injecao & Cut-Off
         if t["ti_lenta_n"] >= 3:
             ti_med = t["ti_lenta_soma"] / t["ti_lenta_n"]
             if ti_med < 1.8:
@@ -482,7 +468,6 @@ class TR4EngineMixin:
         else:
             det_inj = f"  - Cortes de combustivel (Cut-Off) detectados: {t['cutoff_eventos']}"
 
-        # 7. Ignicao & Eficiencia
         av_lenta_txt = f"{(t['avanco_lenta_soma'] / t['avanco_lenta_n']):.1f} graus" if t["avanco_lenta_n"] > 0 else "--"
         av_max_txt = f"{t['avanco_max']:.1f} graus" if t["avanco_max"] is not None else "--"
         det_ign = (
@@ -604,7 +589,6 @@ class TR4EngineMixin:
                 pass
 
     def iniciar_simulacao(self, *args):
-        self._init_telemetria_viagem()
         self.desconectar_ecu()
         self._init_telemetria_viagem()
         self.modo_simulacao = True
@@ -802,14 +786,14 @@ class TR4EngineMixin:
 
             r_sess = self.enviar_comando_raw("1081", timeout=2.0)
             log_hs.append(f"Sessao KWP: {r_sess or 'TIMEOUT'}")
-            r_map = self.enviar_comando_raw("2131", timeout=1.8)
-            log_hs.append(f"Teste MAP: {r_map or 'TIMEOUT'}")
+            r_map = self.enviar_comando_raw("21A2", timeout=1.8)
+            log_hs.append(f"Teste 21A2: {r_map or 'TIMEOUT'}")
             if self._abortado(seq):
                 return
 
             limpo_map = "".join(c for c in r_map.upper() if c in "0123456789ABCDEF")
             limpo_sess = "".join(c for c in r_sess.upper() if c in "0123456789ABCDEF")
-            conectou_real = ("5081" in limpo_sess) or ("6131" in limpo_map)
+            conectou_real = ("5081" in limpo_sess) or ("61A2" in limpo_map)
 
             if not conectou_real:
                 Clock.schedule_once(
@@ -1496,7 +1480,7 @@ class TR4EngineMixin:
             self.rodando = True
             self.loop_leitura()
 
-        def reset_profundo_sfs(self, *args):
+    def reset_profundo_sfs(self, *args):
         if not self.modo_simulacao and (not self.rodando or not self.bt_out or not self.bt_in):
             self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
             return
@@ -1752,3 +1736,4 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
+
