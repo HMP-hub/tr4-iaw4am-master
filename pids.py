@@ -70,6 +70,13 @@ def _calc_ltft_2154(b):
         return None
     return val
 
+def _calc_iac_213a(b):
+    v = _u16(b, 0)
+    if v is None:
+        return None
+    if v > 255:
+        return v & 0xFF
+    return v
 
 def _calc_etanol_pct_217b(b):
     v = _u16(b, 0)
