@@ -347,7 +347,7 @@ PIDS_DB = [
         "cmd": "213A",
         "unidade": "passos",
         "rapido": False,
-        "calc": _u16,
+        "calc": _calc_iac_213a,
         "sim": lambda t: 69,
     },
     {
