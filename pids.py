@@ -10,6 +10,13 @@ def _u16(b, idx=0):
     return (b0 << 8) | b1
 
 
+def _s16(b, idx=0):
+    v = _u16(b, idx)
+    if v is None:
+        return None
+    return v - 65536 if v >= 32768 else v
+
+
 def _u8(b, idx=0):
     if len(b) < idx + 1:
         return None
@@ -26,42 +33,32 @@ def _calc_tps_a2(b):
     return round(min(100.0, pct), 1)
 
 
-def _calc_avanco_a2(b):
-    v = _u16(b, 2)
-    if v is None:
-        return None
-    return round((v - 128.0) * 0.375, 1)
-
-
-def _calc_knock_2167(b, idx):
-    v = _u8(b, idx)
-    if v is None:
-        return None
+def _calc_knock_ret_cil(b, idx):
+    v = _s16(b, idx)
+    if v is None or v < 0 or v > 80:
+        return 0.0
     return round(-v * 0.25, 2)
 
 
-def _calc_knock_max_2167(b):
-    if len(b) < 4:
+def _calc_knock_compilado(b):
+    if len(b) < 14:
         return None
-    vals = [_calc_knock_2167(b, i) for i in range(4)]
-    validos = [x for x in vals if x is not None]
-    if not validos:
-        return None
-    return min(validos)
+    vals = [_calc_knock_ret_cil(b, idx) for idx in (6, 8, 10, 12)]
+    return min(vals)
 
 
-def _calc_knock_v_2168(b, idx):
+def _calc_knock_v_2169(b, idx):
     v = _u8(b, idx)
     if v is None:
         return None
     return round((v / 255.0) * 5.0, 2)
 
 
-def _calc_stft_2152(b):
-    v = _u16(b, 0)
-    if v is None or v == 0:
+def _calc_stft_21a4(b):
+    a = _u8(b, 8)
+    if a is None or a == 0:
         return None
-    return round(((128.0 - v) / 156.0) * 100.0, 1)
+    return round(((156.0 - a) / 156.0) * 100.0, 1)
 
 
 def _calc_ltft_2154(b):
@@ -104,11 +101,11 @@ PIDS_DB = [
     {
         "id": "STFT",
         "nome": "Ajuste Curto (STFT)",
-        "cmd": "2152",
+        "cmd": "21A4",
         "unidade": "%",
         "rapido": True,
-        "calc": _calc_stft_2152,
-        "sim": lambda t: round(2.5 * math.sin(t * 1.1), 1),
+        "calc": _calc_stft_21a4,
+        "sim": lambda t: round(-4.5 + 3.0 * math.sin(t * 1.1), 1),
     },
     {
         "id": "LTFT",
@@ -117,25 +114,25 @@ PIDS_DB = [
         "unidade": "%",
         "rapido": True,
         "calc": _calc_ltft_2154,
-        "sim": lambda t: -1.3,
+        "sim": lambda t: -0.7,
     },
     {
         "id": "LAMBDA_1",
         "nome": "Sonda Pre-Cat",
-        "cmd": "21A4",
+        "cmd": "2145",
         "unidade": "mV",
         "rapido": True,
-        "calc": lambda b: int(round((_u16(b, 0) / 1023.0) * 5000.0)) if _u16(b, 0) is not None else None,
+        "calc": lambda b: _u16(b, 0),
         "sim": lambda t: int(450 + 380 * math.sin(t * 3.2)),
     },
     {
         "id": "TI_EFETIVO",
         "nome": "Tempo Injecao",
-        "cmd": "21A5",
+        "cmd": "21A0",
         "unidade": "ms",
         "rapido": True,
-        "calc": lambda b: round(_u16(b, 0) * 0.004, 2) if _u16(b, 0) is not None else None,
-        "sim": lambda t: round(2.55 + 0.35 * math.sin(t * 0.9), 2),
+        "calc": lambda b: round(_u16(b, 16) * 0.002, 2) if _u16(b, 16) is not None else None,
+        "sim": lambda t: round(2.52 + 0.35 * math.sin(t * 0.9), 2),
     },
     {
         "id": "RPM",
@@ -149,20 +146,20 @@ PIDS_DB = [
     {
         "id": "AVANCO",
         "nome": "Avanco Ignicao",
-        "cmd": "21A2",
+        "cmd": "21A0",
         "unidade": "deg",
         "rapido": True,
-        "calc": _calc_avanco_a2,
-        "sim": lambda t: round(-5.0 + 3.0 * math.sin(t * 1.2), 1),
+        "calc": lambda b: round(_s16(b, 14) * 0.125, 1) if _s16(b, 14) is not None else None,
+        "sim": lambda t: round(-5.5 + 2.5 * math.sin(t * 1.2), 1),
     },
     {
         "id": "MAP",
         "nome": "Pressao Coletor",
-        "cmd": "2131",
+        "cmd": "21A2",
         "unidade": "kPa",
         "rapido": True,
-        "calc": lambda b: round(_u16(b, 0) / 10.0, 1) if _u16(b, 0) is not None else None,
-        "sim": lambda t: round(32.0 + 1.5 * math.cos(t * 1.3), 1),
+        "calc": lambda b: round(_u16(b, 2) / 10.0, 1) if _u16(b, 2) is not None else None,
+        "sim": lambda t: round(31.5 + 1.5 * math.cos(t * 1.3), 1),
     },
     {
         "id": "VBAT",
@@ -170,7 +167,7 @@ PIDS_DB = [
         "cmd": "21A2",
         "unidade": "V",
         "rapido": True,
-        "calc": lambda b: round(_u16(b, 4) * 0.0704, 1) if _u16(b, 4) is not None else None,
+        "calc": lambda b: round(_u16(b, 16) * 0.1, 1) if _u16(b, 16) is not None else None,
         "sim": lambda t: round(14.1 + 0.1 * math.sin(t * 0.5), 1),
     },
     {
@@ -185,10 +182,10 @@ PIDS_DB = [
     {
         "id": "KNOCK_MAX",
         "nome": "Atraso Detonacao",
-        "cmd": "2167",
+        "cmd": "21A3",
         "unidade": "deg",
         "rapido": True,
-        "calc": _calc_knock_max_2167,
+        "calc": _calc_knock_compilado,
         "sim": lambda t: 0.0,
     },
     {
@@ -198,7 +195,7 @@ PIDS_DB = [
         "unidade": "V",
         "rapido": False,
         "calc": lambda b: round((_u16(b, 0) / 1023.0) * 5.0, 2) if _u16(b, 0) is not None else None,
-        "sim": lambda t: round(0.58 + 0.08 * abs(math.sin(t * 2.1)), 2),
+        "sim": lambda t: round(0.57 + 0.08 * abs(math.sin(t * 2.1)), 2),
     },
     {
         "id": "VEL",
@@ -222,37 +219,37 @@ PIDS_DB = [
     {
         "id": "KNOCK_CIL1",
         "nome": "Retardo Cilindro 1",
-        "cmd": "2167",
+        "cmd": "21A3",
         "unidade": "deg",
         "rapido": False,
-        "calc": lambda b: _calc_knock_2167(b, 0),
+        "calc": lambda b: _calc_knock_ret_cil(b, 6),
         "sim": lambda t: 0.0,
     },
     {
         "id": "KNOCK_CIL2",
         "nome": "Retardo Cilindro 2",
-        "cmd": "2167",
+        "cmd": "21A3",
         "unidade": "deg",
         "rapido": False,
-        "calc": lambda b: _calc_knock_2167(b, 1),
+        "calc": lambda b: _calc_knock_ret_cil(b, 8),
         "sim": lambda t: 0.0,
     },
     {
         "id": "KNOCK_CIL3",
         "nome": "Retardo Cilindro 3",
-        "cmd": "2167",
+        "cmd": "21A3",
         "unidade": "deg",
         "rapido": False,
-        "calc": lambda b: _calc_knock_2167(b, 2),
+        "calc": lambda b: _calc_knock_ret_cil(b, 10),
         "sim": lambda t: 0.0,
     },
     {
         "id": "KNOCK_CIL4",
         "nome": "Retardo Cilindro 4",
-        "cmd": "2167",
+        "cmd": "21A3",
         "unidade": "deg",
         "rapido": False,
-        "calc": lambda b: _calc_knock_2167(b, 3),
+        "calc": lambda b: _calc_knock_ret_cil(b, 12),
         "sim": lambda t: 0.0,
     },
     {
@@ -261,8 +258,8 @@ PIDS_DB = [
         "cmd": "2169",
         "unidade": "V",
         "rapido": False,
-        "calc": lambda b: _calc_knock_v_2168(b, 0),
-        "sim": lambda t: round(0.12 + 0.03 * abs(math.sin(t * 2.0)), 2),
+        "calc": lambda b: _calc_knock_v_2169(b, 0),
+        "sim": lambda t: round(0.11 + 0.03 * abs(math.sin(t * 2.0)), 2),
     },
     {
         "id": "KNOCK_V_CIL2",
@@ -270,8 +267,8 @@ PIDS_DB = [
         "cmd": "2169",
         "unidade": "V",
         "rapido": False,
-        "calc": lambda b: _calc_knock_v_2168(b, 1),
-        "sim": lambda t: round(0.12 + 0.03 * abs(math.cos(t * 2.1)), 2),
+        "calc": lambda b: _calc_knock_v_2169(b, 1),
+        "sim": lambda t: round(0.11 + 0.03 * abs(math.cos(t * 2.1)), 2),
     },
     {
         "id": "KNOCK_V_CIL3",
@@ -279,7 +276,7 @@ PIDS_DB = [
         "cmd": "2169",
         "unidade": "V",
         "rapido": False,
-        "calc": lambda b: _calc_knock_v_2168(b, 2),
+        "calc": lambda b: _calc_knock_v_2169(b, 2),
         "sim": lambda t: round(0.11 + 0.03 * abs(math.sin(t * 1.9)), 2),
     },
     {
@@ -288,8 +285,8 @@ PIDS_DB = [
         "cmd": "2169",
         "unidade": "V",
         "rapido": False,
-        "calc": lambda b: _calc_knock_v_2168(b, 3),
-        "sim": lambda t: round(0.12 + 0.03 * abs(math.cos(t * 2.2)), 2),
+        "calc": lambda b: _calc_knock_v_2169(b, 3),
+        "sim": lambda t: round(0.11 + 0.03 * abs(math.cos(t * 2.2)), 2),
     },
     {
         "id": "CORR_IGN",
@@ -334,7 +331,7 @@ PIDS_DB = [
         "cmd": "21A2",
         "unidade": "C",
         "rapido": False,
-        "calc": lambda b: round(float(_u16(b, 10) - 40), 1) if _u16(b, 10) is not None else None,
+        "calc": lambda b: round(float(_u16(b, 4) - 40), 1) if _u16(b, 4) is not None else None,
         "sim": lambda t: 44.0,
     },
     {
@@ -361,8 +358,8 @@ PIDS_DB = [
         "cmd": "2147",
         "unidade": "kPa",
         "rapido": False,
-        "calc": lambda b: round(_u16(b, 0) / 10.0, 1) if _u16(b, 0) is not None else None,
-        "sim": lambda t: 98.5,
+        "calc": lambda b: round(_u16(b, 10) / 10.0, 1) if _u16(b, 10) is not None else None,
+        "sim": lambda t: 97.9,
     },
     {
         "id": "CARGA",
