@@ -15,6 +15,7 @@ from kivy.uix.label import Label
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.spinner import Spinner
 from kivy.uix.widget import Widget
+from kivy.uix.popup import Popup
 
 from pids import PIDS_DB
 from engine import TR4EngineMixin
@@ -46,6 +47,7 @@ class CardPID(BoxLayout):
         self.pid_id = pid_id
         self.app_ref = app_ref
         self._lp_event = None
+        self._del_event = None
         self._touch_ini = (0, 0)
         self._arrastando = False
         self._ghost = None
@@ -55,7 +57,37 @@ class CardPID(BoxLayout):
         if self.collide_point(*touch.pos):
             self._touch_ini = touch.pos
             self._lp_event = Clock.schedule_once(lambda dt: self._iniciar_drag(touch), 0.35)
+            self._del_event = Clock.schedule_once(lambda dt: self._mostrar_opcao_remover(touch), 1.20)
         return super().on_touch_down(touch)
+
+    def _cancelar_timers(self):
+        if self._lp_event:
+            self._lp_event.cancel()
+            self._lp_event = None
+        if self._del_event:
+            self._del_event.cancel()
+            self._del_event = None
+
+    def _limpar_ghost(self):
+        if self._ghost:
+            try:
+                Window.remove_widget(self._ghost)
+            except Exception:
+                pass
+            self._ghost = None
+
+    def _mostrar_opcao_remover(self, touch):
+        self._del_event = None
+        if self._arrastando:
+            try:
+                touch.ungrab(self)
+            except Exception:
+                pass
+            self._arrastando = False
+            self._limpar_ghost()
+            self.opacity = 1.0
+            self.app_ref.scroll_painel.do_scroll_y = True
+        self.app_ref._abrir_confirmacao_remover_card(self.pid_id)
 
     def _iniciar_drag(self, touch):
         self._lp_event = None
@@ -75,7 +107,7 @@ class CardPID(BoxLayout):
             pos=lambda inst, v: self._atualizar_ghost_canvas(),
             size=lambda inst, v: self._atualizar_ghost_canvas(),
         )
-        lbl_g = Label(text=self.children[-1].text, font_size="14sp", bold=True, color=(1, 1, 1, 1))
+        lbl_g = Label(text=self.children[-1].text, font_size="13sp", bold=True, color=(1, 1, 1, 1))
         self._ghost.add_widget(lbl_g)
         Window.add_widget(self._ghost)
         self.opacity = 0.25
@@ -88,32 +120,29 @@ class CardPID(BoxLayout):
                 Rectangle(pos=self._ghost.pos, size=self._ghost.size)
 
     def on_touch_move(self, touch):
+        ix, iy = self._touch_ini
+        moveu = abs(touch.x - ix) > dp(12) or abs(touch.y - iy) > dp(12)
+        if moveu and self._del_event:
+            self._del_event.cancel()
+            self._del_event = None
         if self._arrastando and touch.grab_current is self:
             if self._ghost:
                 ox, oy = self._offset
                 self._ghost.pos = (touch.x - ox, touch.y - oy)
             self.app_ref._processar_movimento_drag(self.pid_id, touch.pos)
             return True
-        if self._lp_event:
-            ix, iy = self._touch_ini
-            dx = abs(touch.x - ix)
-            dy = abs(touch.y - iy)
-            if dx > dp(12) or dy > dp(12):
-                self._lp_event.cancel()
-                self._lp_event = None
+        if moveu and self._lp_event:
+            self._lp_event.cancel()
+            self._lp_event = None
         return super().on_touch_move(touch)
 
     def on_touch_up(self, touch):
-        if self._lp_event:
-            self._lp_event.cancel()
-            self._lp_event = None
+        self._cancelar_timers()
         if self._arrastando and touch.grab_current is self:
             touch.ungrab(self)
             self._arrastando = False
             self.opacity = 1.0
-            if self._ghost:
-                Window.remove_widget(self._ghost)
-                self._ghost = None
+            self._limpar_ghost()
             self.app_ref.scroll_painel.do_scroll_y = True
             self.app_ref._salvar_ordem_pids()
             self.app_ref._reconstruir_cards_painel()
@@ -410,6 +439,56 @@ class TR4ScannerApp(App, TR4EngineMixin):
         if alvo_id:
             self.reordenar_card_drag(pid_origem, alvo_id)
 
+    def _abrir_confirmacao_remover_card(self, pid_id):
+        mapa_pids = {p["id"]: p for p in PIDS_DB}
+        nome_pid = mapa_pids.get(pid_id, {}).get("nome", pid_id)
+
+        box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12))
+        lbl = Label(
+            text=f"Remover '{nome_pid}' do painel principal?\n\n(Voce pode reativar a qualquer momento na aba PIDS.)",
+            font_size="13.5sp",
+            halign="center",
+            valign="middle",
+        )
+        lbl.bind(size=lambda inst, v: setattr(inst, "text_size", v))
+        box.add_widget(lbl)
+
+        btns = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(10))
+        pop = Popup(title="Remover Card do Painel", content=box, size_hint=(0.86, 0.38))
+
+        b_canc = Button(
+            text="MANTER",
+            font_size="13sp",
+            bold=True,
+            background_normal="",
+            background_color=(0.30, 0.34, 0.40, 1),
+        )
+        b_canc.bind(on_release=pop.dismiss)
+
+        b_rem = Button(
+            text="REMOVER",
+            font_size="13sp",
+            bold=True,
+            background_normal="",
+            background_color=(0.78, 0.22, 0.22, 1),
+        )
+        b_rem.bind(on_release=lambda *a: self._executar_remocao_card(pid_id, pop))
+
+        btns.add_widget(b_canc)
+        btns.add_widget(b_rem)
+        box.add_widget(btns)
+        pop.open()
+
+    def _executar_remocao_card(self, pid_id, pop):
+        try:
+            pop.dismiss()
+        except Exception:
+            pass
+        self.selecionados[pid_id] = False
+        if pid_id in self.checks_pids:
+            self.checks_pids[pid_id].active = False
+        self._reconstruir_cards_painel()
+
     def _reconstruir_cards_painel(self, pid_arrastando=None):
         self.grid_painel.clear_widgets()
         self.cards_ui = {}
@@ -440,9 +519,10 @@ class TR4ScannerApp(App, TR4EngineMixin):
             card.bind(pos=lambda inst, v, r=bg: setattr(r, "pos", v))
             card.bind(size=lambda inst, v, r=bg: setattr(r, "size", v))
 
+            unid_txt = f" ({p['unidade']})" if p["unidade"] else ""
             lbl_nome = Label(
-                text=p["nome"],
-                font_size="13sp",
+                text=f"{p['nome']}{unid_txt}",
+                font_size="12.5sp",
                 bold=True,
                 color=(0.82, 0.87, 0.94, 1),
                 halign="center",
@@ -452,10 +532,10 @@ class TR4ScannerApp(App, TR4EngineMixin):
             lbl_nome.bind(size=lambda inst, v: setattr(inst, "text_size", v))
 
             val_atual = self.valores_atuais.get(pid_id, "--")
-            txt_val = f"{val_atual} {p['unidade']}" if val_atual != "--" else "--"
+            txt_val = f"{val_atual}" if val_atual != "--" else "--"
             lbl_val = Label(
                 text=txt_val,
-                font_size="21sp",
+                font_size="23sp",
                 bold=True,
                 color=(0.25, 0.92, 0.55, 1),
                 halign="center",
@@ -530,8 +610,9 @@ class TR4ScannerApp(App, TR4EngineMixin):
             chk.bind(active=lambda inst, val, k=pid_id: self._toggle_pid_painel(k, val))
             self.checks_pids[pid_id] = chk
 
+            unid_p = f" ({p['unidade']})" if p["unidade"] else ""
             lbl = Label(
-                text=f"{p['nome']} ({p['unidade']})",
+                text=f"{p['nome']}{unid_p}",
                 font_size="12sp",
                 halign="left",
                 valign="middle",
@@ -729,8 +810,9 @@ class TR4ScannerApp(App, TR4EngineMixin):
             chk.bind(active=lambda inst, val, k=pid_id: self.selecionados_log.update({k: bool(val)}))
             self.checks_log[pid_id] = chk
 
+            unid_l = f" ({p['unidade']})" if p["unidade"] else ""
             lbl = Label(
-                text=f"{p['nome']} ({p['unidade']})",
+                text=f"{p['nome']}{unid_l}",
                 font_size="12sp",
                 halign="left",
                 valign="middle",
