@@ -1559,34 +1559,32 @@ class TR4EngineMixin:
         self.lbl_eng.text = "Executando Reset Profundo SFS (sessoes e rotinas 31/30)..."
         threading.Thread(target=self._reset_profundo_sfs_thread, daemon=True).start()
 
-    def _reset_profundo_sfs_thread(self):
+        def _reset_profundo_sfs_thread(self):
         time.sleep(0.25)
         log_sfs = [f"RESET PROFUNDO SFS IAW 4AM - {datetime.now()}"]
         b7b_antes = self.enviar_comando_raw("217B", timeout=1.0)
         b54_antes = self.enviar_comando_raw("2154", timeout=1.0)
         log_sfs.append(f"ANTES -> 217B: {b7b_antes} | 2154: {b54_antes}")
 
-        for ses in ("1081", "1085", "10C0"):
+        for ses in ("1081", "1085", "1087", "1092"):
             r_ses = self.enviar_comando_raw(ses, timeout=1.0)
-            log_sfs.append(f"Sessao {ses} -> {r_ses}")
+            limpo_ses = "".join(c for c in r_ses.upper() if c in "0123456789ABCDEF")
+            log_sfs.append(f"\n=== SESSAO {ses} -> {r_ses} ===")
+            if f"50{ses[2:4]}" not in limpo_ses:
+                continue
 
-        rotinas = [
-            "3101", "3102", "3103", "3104", "3105",
-            "3106", "3107", "3108", "3110", "3120", "3180",
-            "300100", "300200", "300500", "301000", "308000",
-        ]
-        aceitas = []
-        for cmd in rotinas:
-            resp = self.enviar_comando_raw(cmd, timeout=1.0)
-            limpo = "".join(c for c in resp.upper() if c in "0123456789ABCDEF")
-            ok_prefix = f"{(int(cmd[:2], 16) + 0x40):02X}{cmd[2:4]}"
-            if ok_prefix in limpo:
-                aceitas.append(f"{cmd} -> {resp}")
-            log_sfs.append(f"Cmd {cmd} -> {resp}")
+            self.enviar_comando_raw("3E", timeout=0.6)
+            for lvl in ("2701", "2703", "2705"):
+                r_sd = self.enviar_comando_raw(lvl, timeout=0.9)
+                log_sfs.append(f"  Seed {lvl} -> {r_sd}")
 
-        r_dtc = self.enviar_comando_raw("14FF00", timeout=1.5)
-        log_sfs.append(f"Clear 14FF00 -> {r_dtc}")
+            for cmd in ("3101", "3102", "3103", "3104", "3105", "310100", "310300", "300101"):
+                resp = self.enviar_comando_raw(cmd, timeout=0.9)
+                log_sfs.append(f"  {cmd} -> {resp}")
+
         self.enviar_comando_raw("1081", timeout=1.0)
+        r_dtc = self.enviar_comando_raw("14FF00", timeout=1.5)
+        log_sfs.append(f"\nClear 14FF00 (em 1081) -> {r_dtc}")
 
         b7b_depois = self.enviar_comando_raw("217B", timeout=1.0)
         b54_depois = self.enviar_comando_raw("2154", timeout=1.0)
@@ -1600,13 +1598,10 @@ class TR4EngineMixin:
         except Exception:
             arq = "Nao salvo"
 
-        res_aceitas = "\n".join(aceitas) if aceitas else "Nenhuma rotina 31/30 extra (14FF00 aplicado)"
         msg = (
-            f"Reset Profundo SFS Concluido!\n\n"
-            f"Rotinas aceitas:\n{res_aceitas}\n\n"
-            f"217B: {b7b_antes} -> {b7b_depois}\n"
-            f"2154: {b54_antes} -> {b54_depois}\n\n"
-            f"Desligue a chave por 15s e de partida sem acelerar."
+            f"Probe SFS / Seed Concluido!\n\n"
+            f"Arquivo salvo em:\n{arq}\n\n"
+            f"217B: {b7b_antes} -> {b7b_depois}"
         )
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", msg))
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
