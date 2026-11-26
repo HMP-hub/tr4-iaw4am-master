@@ -506,7 +506,156 @@ class TR4EngineMixin:
             if hasattr(self, "lbl_boletim"):
                 self.lbl_boletim.text = f"Erro ao salvar boletim: {e}"
 
-    def _caminho_config_bt(self):
+    
+    def _fmt_item_checkup(self, nivel, titulo, detalhe):
+        if nivel == "OK":
+            tag = "[b][color=33EE66][ V ][/color][/b]"
+        elif nivel == "ALERTA":
+            tag = "[b][color=FFCC22][ ! ][/color][/b]"
+        else:
+            tag = "[b][color=FF4444][ X ][/color][/b]"
+        return f"{tag} [b]{titulo}:[/b] {detalhe}"
+
+    def executar_checkup_pre_partida(self, *args):
+        if self.modo_simulacao:
+            linhas = [
+                f"[b]=== CHECK-UP PRE-PARTIDA (SIMULACAO) ===[/b]",
+                self._fmt_item_checkup("OK", "Memoria Falhas (DTC)", "Zero falhas gravadas na ECU"),
+                self._fmt_item_checkup("OK", "Bateria Repouso", "12.4 V (Carga ideal para partida)"),
+                self._fmt_item_checkup("OK", "MAP vs Barometro", "98.0 kPa vs 97.9 kPa (Calibrado)"),
+                self._fmt_item_checkup("OK", "Sensores Temp (ECT/IAT)", "28.0 C vs 29.0 C (Coerentes)"),
+                self._fmt_item_checkup("OK", "Borboleta (TPS)", "0.0% em repouso (Calibrada)"),
+                self._fmt_item_checkup("OK", "Sonda Lambda Pre-Cat", "455 mV (Polarizacao OK)"),
+                self._fmt_item_checkup("OK", "Combustivel SFS", "E27 (FLEX) - Mapa 13.2:1"),
+                self._fmt_item_checkup("OK", "Circuito Sensor Knock", "0.55 V (Sem curto/circuito aberto)"),
+            ]
+            if hasattr(self, "lbl_boletim"):
+                self.lbl_boletim.text = "\n\n".join(linhas)
+            return
+
+        if not self.rodando or not self.bt_out or not self.bt_in:
+            if hasattr(self, "lbl_boletim"):
+                self.lbl_boletim.text = "[b][color=FF4444][ X ][/color] ECU desconectada![/b]\n\nLigue a chave em ON e clique em CONECTAR primeiro."
+            return
+
+        self.rodando = False
+        if hasattr(self, "lbl_boletim"):
+            self.lbl_boletim.text = "Executando Check-Up Pre-Partida nos 8 sistemas da ECU..."
+        threading.Thread(target=self._checkup_pre_partida_thread, daemon=True).start()
+
+    
+    def _checkup_pre_partida_thread(self):
+        time.sleep(0.25)
+        b_a2 = self.parse_bytes_kwp(self.enviar_comando_raw("21A2", timeout=1.0), "21A2")
+        b_47 = self.parse_bytes_kwp(self.enviar_comando_raw("2147", timeout=1.0), "2147")
+        b_45 = self.parse_bytes_kwp(self.enviar_comando_raw("2145", timeout=1.0), "2145")
+        b_7b = self.parse_bytes_kwp(self.enviar_comando_raw("217B", timeout=1.0), "217B")
+        b_68 = self.parse_bytes_kwp(self.enviar_comando_raw("2168", timeout=1.0), "2168")
+        resp_dtc = self.enviar_comando_raw("1800FF00", timeout=1.5)
+
+        rpm = ((itemgetter(0)(b_a2) << 8) | itemgetter(1)(b_a2)) if len(b_a2) >= 2 else 0
+        mp = round(((itemgetter(2)(b_a2) << 8) | itemgetter(3)(b_a2)) / 10.0, 1) if len(b_a2) >= 4 else None
+        iat = round(float(((itemgetter(4)(b_a2) << 8) | itemgetter(5)(b_a2)) - 40), 1) if len(b_a2) >= 6 else None
+        ect = round(float(((itemgetter(6)(b_a2) << 8) | itemgetter(7)(b_a2)) - 40), 1) if len(b_a2) >= 8 else None
+        tps_raw = ((itemgetter(8)(b_a2) << 8) | itemgetter(9)(b_a2)) if len(b_a2) >= 10 else 1
+        tps = 0.0 if ((tps_raw - 1.0) / 835.0) * 100.0 < 0.35 else round(((tps_raw - 1.0) / 835.0) * 100.0, 1)
+        vbat = round(((itemgetter(16)(b_a2) << 8) | itemgetter(17)(b_a2)) * 0.1, 1) if len(b_a2) >= 18 else None
+        baro = round(((itemgetter(10)(b_47) << 8) | itemgetter(11)(b_47)) / 10.0, 1) if len(b_47) >= 12 else None
+        lam = ((itemgetter(0)(b_45) << 8) | itemgetter(1)(b_45)) if len(b_45) >= 2 else None
+        kv = round((((itemgetter(0)(b_68) << 8) | itemgetter(1)(b_68)) / 1023.0) * 5.0, 2) if len(b_68) >= 2 else None
+
+        itens = [f"[b]=== CHECK-UP PRE-PARTIDA ({datetime.now().strftime('%H:%M:%S')}) ===[/b]"]
+        if rpm > 0:
+            itens.append(self._fmt_item_checkup("ALERTA", "Aviso de Motor", f"Motor ligado ({rpm} rpm). Para teste completo, faca com chave ON e motor parado."))
+
+        # 1. DTCs
+        limpo_dtc = "".join(c for c in resp_dtc.upper() if c in "0123456789ABCDEF")
+        idx_58 = limpo_dtc.find("58")
+        if idx_58 != -1 and len(limpo_dtc) >= idx_58 + 4:
+            qtd_dtc = int(limpo_dtc[idx_58 + 2:idx_58 + 4], 16)
+            if qtd_dtc == 0:
+                itens.append(self._fmt_item_checkup("OK", "Memoria Falhas (MIL)", "Zero falhas gravadas na ECU"))
+            else:
+                itens.append(self._fmt_item_checkup("ERRO", "Memoria Falhas (MIL)", f"{qtd_dtc} falha(s) ativa(s)! Consulte na aba ENG/DTC"))
+        else:
+            itens.append(self._fmt_item_checkup("ALERTA", "Memoria Falhas (MIL)", "Nao foi possivel ler DTCs"))
+
+        # 2. Bateria
+        if vbat is None:
+            itens.append(self._fmt_item_checkup("ALERTA", "Bateria", "Sem leitura"))
+        elif rpm > 0:
+            niv_b = "OK" if 13.4 <= vbat <= 14.8 else "ALERTA"
+            itens.append(self._fmt_item_checkup(niv_b, "Alternador / Bateria", f"{vbat:.1f} V (Motor rodando)"))
+        elif vbat >= 12.2:
+            itens.append(self._fmt_item_checkup("OK", "Bateria Pre-Partida", f"{vbat:.1f} V (Carga saudavel)"))
+        elif vbat >= 11.8:
+            itens.append(self._fmt_item_checkup("ALERTA", "Bateria Pre-Partida", f"{vbat:.1f} V (Carga mediana)"))
+        else:
+            itens.append(self._fmt_item_checkup("ERRO", "Bateria Pre-Partida", f"{vbat:.1f} V (Tensao baixa - risco na partida)"))
+
+        # 3. MAP vs BARO
+        if mp is not None and baro is not None:
+            if rpm == 0:
+                diff_p = abs(mp - baro)
+                if diff_p <= 2.2:
+                    itens.append(self._fmt_item_checkup("OK", "Sensor MAP vs Baro", f"{mp:.1f} kPa vs {baro:.1f} kPa (Calibrado)"))
+                elif diff_p <= 4.5:
+                    itens.append(self._fmt_item_checkup("ALERTA", "Sensor MAP vs Baro", f"{mp:.1f} vs {baro:.1f} kPa (Desvio leve)"))
+                else:
+                    itens.append(self._fmt_item_checkup("ERRO", "Sensor MAP vs Baro", f"{mp:.1f} vs {baro:.1f} kPa (Sensor MAP descalibrado!)"))
+            else:
+                itens.append(self._fmt_item_checkup("OK", "Pressao MAP / Baro", f"MAP {mp:.1f} kPa | Baro {baro:.1f} kPa"))
+
+        # 4. ECT vs IAT
+        if ect is not None and iat is not None:
+            diff_t = abs(ect - iat)
+            if rpm == 0 and diff_t <= 6.0:
+                itens.append(self._fmt_item_checkup("OK", "Sensores Temp (ECT/IAT)", f"Agua {ect:.0f} C | Ar {iat:.0f} C (Coerentes)"))
+            elif rpm == 0 and ect > 45.0:
+                itens.append(self._fmt_item_checkup("ALERTA", "Sensores Temp (ECT/IAT)", f"Agua {ect:.0f} C | Ar {iat:.0f} C (Motor ainda quente)"))
+            elif rpm == 0:
+                itens.append(self._fmt_item_checkup("ERRO", "Sensores Temp (ECT/IAT)", f"Agua {ect:.0f} C vs Ar {iat:.0f} C (Divergencia de sensor!)"))
+            else:
+                itens.append(self._fmt_item_checkup("OK", "Temperaturas (ECT/IAT)", f"Agua {ect:.0f} C | Ar {iat:.0f} C"))
+
+        # 5. TPS
+        if rpm == 0:
+            if tps <= 0.4:
+                itens.append(self._fmt_item_checkup("OK", "Borboleta (TPS)", "0.0% em repouso (Fechada e calibrada)"))
+            else:
+                itens.append(self._fmt_item_checkup("ERRO", "Borboleta (TPS)", f"{tps:.1f}% com pedal solto (Verificar cabo/TPS)"))
+
+        # 6. Sonda Lambda
+        if lam is not None:
+            if 350 <= lam <= 550 and rpm == 0:
+                itens.append(self._fmt_item_checkup("OK", "Sonda Lambda Pre-Cat", f"{lam} mV (Polarizacao de repouso OK)"))
+            elif 50 <= lam <= 980:
+                itens.append(self._fmt_item_checkup("OK", "Sonda Lambda Pre-Cat", f"{lam} mV (Sinal ativo)"))
+            else:
+                itens.append(self._fmt_item_checkup("ERRO", "Sonda Lambda Pre-Cat", f"{lam} mV (Fora da faixa - verificar chicote)"))
+
+        # 7. Combustivel SFS
+        if len(b_7b) >= 2:
+            raw_7b = (itemgetter(0)(b_7b) << 8) | itemgetter(1)(b_7b)
+            pct_alc = int(max(0.0, min(100.0, round((raw_7b / 488.9) * 100.0, 0))))
+            af_val = round(14.7 - (pct_alc / 100.0) * 5.7, 1)
+            tipo_c = f"E{pct_alc:02d} (GAS)" if pct_alc <= 3 else (f"E{pct_alc} (ALC)" if pct_alc >= 95 else f"E{pct_alc:02d} (FLEX)")
+            itens.append(self._fmt_item_checkup("OK", "Combustivel SFS (217B)", f"{tipo_c} | Mapa {af_val}:1"))
+
+        # 8. Sensor Knock
+        if kv is not None:
+            if 0.03 <= kv <= 3.5:
+                itens.append(self._fmt_item_checkup("OK", "Sensor Detonacao (Knock)", f"{kv:.2f} V (Circuito integro)"))
+            else:
+                itens.append(self._fmt_item_checkup("ERRO", "Sensor Detonacao (Knock)", f"{kv:.2f} V (Curto ou circuito aberto)"))
+
+        texto_final = "\n\n".join(itens)
+        Clock.schedule_once(lambda dt: setattr(self.lbl_boletim, "text", texto_final))
+        if self.estado_conexao == "CONECTADO" and self.bt_socket:
+            self.rodando = True
+            self.loop_leitura()
+
+        def _caminho_config_bt(self):
         base = "."
         try:
             cand = getattr(self, "user_data_dir", ".")
