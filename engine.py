@@ -499,15 +499,14 @@ class TR4EngineMixin:
             with open(nome_arq, "w", encoding="utf-8") as f:
                 f.write(f"Gerado em: {datetime.now()}\n\n" + texto)
             if hasattr(self, "lbl_boletim"):
-                self.lbl_boletim.text = f"BOLETIM SALVO EM:\n{nome_arq}\n\n" + texto
+                self.lbl_boletim.text = f"[b][color=33EE66][ V ] BOLETIM SALVO COM SUCESSO![/color][/b]\nArquivo: {nome_arq}\n\n" + texto
             if hasattr(self, "lbl_eng"):
                 self.lbl_eng.text = f"Boletim salvo com sucesso em:\n{nome_arq}"
         except Exception as e:
             if hasattr(self, "lbl_boletim"):
-                self.lbl_boletim.text = f"Erro ao salvar boletim: {e}"
+                self.lbl_boletim.text = f"[b][color=FF4444][ X ] Erro ao salvar boletim:[/color][/b] {e}"
 
-    
-    def _fmt_item_checkup(self, nivel, titulo, detalhe):
+        def _fmt_item_checkup(self, nivel, titulo, detalhe):
         if nivel == "OK":
             tag = "[b][color=33EE66][ V ][/color][/b]"
         elif nivel == "ALERTA":
@@ -1234,6 +1233,16 @@ class TR4EngineMixin:
             self._atualizar_status(f"ECU CONECTADA | K-LINE ATIVO{rec_tag}", (0.2, 0.95, 0.45, 1))
         elif self.estado_conexao == "SIMULACAO":
             self._atualizar_status(f"SIMULACAO ATIVA | IAW 4AM{rec_tag}", (0.3, 0.9, 0.5, 1))
+                    if hasattr(self, "lbl_bol_status"):
+            if self.estado_conexao in ("CONECTADO", "SIMULACAO"):
+                dur_b = max(0, int(time.time() - self.tel.get("inicio_ts", time.time())))
+                mb, sb = divmod(dur_b, 60)
+                am = self.tel.get("amostras", 0)
+                self.lbl_bol_status.text = f"TELEMETRIA ATIVA  |  Tempo: {mb:02d}m {sb:02d}s  |  Amostras: {am}"
+                self.lbl_bol_status.color = (0.25, 0.95, 0.45, 1)
+            else:
+                self.lbl_bol_status.text = "TELEMETRIA EM PAUSA (Aguardando conexao)"
+                self.lbl_bol_status.color = (1.0, 0.78, 0.2, 1)
 
     def _obter_pasta_gravacao(self):
         pasta_dl = "/sdcard/Download"
