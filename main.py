@@ -716,7 +716,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
         scr = Screen(name="boletim")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
 
-                btn_check = Button(
+        btn_check = Button(
             text="CHECK-UP PRE-PARTIDA (8 SISTEMAS)",
             size_hint_y=None,
             height=dp(44),
