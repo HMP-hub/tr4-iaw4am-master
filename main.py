@@ -716,7 +716,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
         scr = Screen(name="boletim")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
 
-        btn_check = Button(
+                btn_check = Button(
             text="CHECK-UP PRE-PARTIDA (8 SISTEMAS)",
             size_hint_y=None,
             height=dp(44),
@@ -727,6 +727,16 @@ class TR4ScannerApp(App, TR4EngineMixin):
         )
         btn_check.bind(on_release=self.executar_checkup_pre_partida)
         box.add_widget(btn_check)
+
+        self.lbl_bol_status = Label(
+            text="TELEMETRIA EM PAUSA (Aguardando conexao)",
+            size_hint_y=None,
+            height=dp(26),
+            font_size="11.5sp",
+            bold=True,
+            color=(1.0, 0.78, 0.2, 1),
+        )
+        box.add_widget(self.lbl_bol_status)
 
         scroll = ScrollView(bar_width=dp(6))
         self.lbl_boletim = Label(
