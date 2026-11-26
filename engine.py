@@ -1547,40 +1547,17 @@ class TR4EngineMixin:
 
     def _reset_profundo_sfs_thread(self):
         time.sleep(0.25)
-        log_sfs = [f"RESET SFS (SESSAO 1081 / 3101 + 3102 + 11XX) - {datetime.now()}"]
+        log_sfs = [f"COLETA SEEDS 2701 (SESSAO 1085) - {datetime.now()}"]
+        seeds = []
 
-        self.enviar_comando_raw("1081", timeout=1.0)
-        b7b_antes = self.enviar_comando_raw("217B", timeout=1.0)
-        b54_antes = self.enviar_comando_raw("2154", timeout=1.0)
-        b_a2 = self.parse_bytes_kwp(self.enviar_comando_raw("21A2", timeout=1.0), "21A2")
-        if len(b_a2) >= 8:
-            r0, r1 = itemgetter(0, 1)(b_a2)
-            rpm_atual = (r0 << 8) | r1
-            e0, e1 = itemgetter(6, 7)(b_a2)
-            ect_atual = ((e0 << 8) | e1) - 40
-        else:
-            rpm_atual, ect_atual = -1, -1
-        log_sfs.append(f"ANTES (ECT={ect_atual}C, RPM={rpm_atual}) -> 217B: {b7b_antes} | 2154: {b54_antes}")
-
-        r_clr = self.enviar_comando_raw("14FF00", timeout=1.5)
-        log_sfs.append(f"Clear 14FF00: {r_clr}")
-        time.sleep(0.25)
-
-        res_cmds = []
-        aceitou_algum = False
-        for cmd in ("3101", "3102", "1101", "1103"):
-            r_cmd = self.enviar_comando_raw(cmd, timeout=1.5)
-            log_sfs.append(f"Cmd {cmd} (sessao 1081) -> {r_cmd}")
-            res_cmds.append(f"{cmd} -> {r_cmd}")
-            limpo = "".join(c for c in r_cmd.upper() if c in "0123456789ABCDEF")
-            ok_pref = f"{(int(cmd[:2], 16) + 0x40):02X}{cmd[2:4]}"
-            if ok_pref in limpo:
-                aceitou_algum = True
-            time.sleep(0.25)
-
-        b7b_depois = self.enviar_comando_raw("217B", timeout=1.0)
-        b54_depois = self.enviar_comando_raw("2154", timeout=1.0)
-        log_sfs.append(f"DEPOIS -> 217B: {b7b_depois} | 2154: {b54_depois}")
+        for tentativa in range(1, 4):
+            r_ses = self.enviar_comando_raw("1085", timeout=1.0)
+            time.sleep(0.15)
+            r_seed = self.enviar_comando_raw("2701", timeout=1.0)
+            log_sfs.append(f"Amostra {tentativa} -> 1085: {r_ses} | 2701: {r_seed}")
+            seeds.append(r_seed)
+            self.enviar_comando_raw("1081", timeout=1.0)
+            time.sleep(0.4)
 
         try:
             pasta = self._obter_pasta_gravacao()
@@ -1590,25 +1567,15 @@ class TR4EngineMixin:
         except Exception:
             arq = "Nao salvo"
 
-        if aceitou_algum:
-            cabecalho = "SUCESSO! Reset Profundo ACEITO pela ECU!\nDesligue a chave por 15s e religue em ON."
-        else:
-            cabecalho = (
-                f"Teste concluido (ECT={ect_atual}C | RPM={rpm_atual}).\n"
-                f"Se deu 7F3122 parado, repita em marcha lenta quente!"
-            )
-
         msg = (
-            f"{cabecalho}\n\n"
-            + "\n".join(res_cmds)
-            + f"\n\n217B: {b7b_antes} -> {b7b_depois}\n"
-            + f"2154: {b54_antes} -> {b54_depois}"
+            "Coleta de Seeds (2701) Concluida!\n\n"
+            + "\n".join(f"{i+1}) {s}" for i, s in enumerate(seeds))
+            + f"\n\nSalvo em: {arq}"
         )
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", msg))
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
-
 
     def buscar_modulos_kwp(self, *args):
         if self.modo_simulacao:
