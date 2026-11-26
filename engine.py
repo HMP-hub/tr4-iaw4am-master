@@ -991,7 +991,7 @@ class TR4EngineMixin:
                     if self.parse_bytes_kwp(raw_hb, "21A2"):
                         comandos_validos = 1
 
-                    if comandos_validos == 0:
+                if comandos_validos == 0:
                     ciclos_sem_resposta += 1
                     if ciclos_sem_resposta in (4, 9, 14):
                         self.enviar_comando_raw("3E", timeout=0.5)
