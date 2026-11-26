@@ -715,8 +715,29 @@ class TR4ScannerApp(App, TR4EngineMixin):
     def _criar_tela_boletim(self):
         scr = Screen(name="boletim")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
+
+        btn_check = Button(
+            text="CHECK-UP PRE-PARTIDA (8 SISTEMAS)",
+            size_hint_y=None,
+            height=dp(44),
+            font_size="12.5sp",
+            bold=True,
+            background_normal="",
+            background_color=(0.12, 0.56, 0.48, 1),
+        )
+        btn_check.bind(on_release=self.executar_checkup_pre_partida)
+        box.add_widget(btn_check)
+
         scroll = ScrollView(bar_width=dp(6))
-        self.lbl_boletim = Label(text="Conecte ao veiculo para iniciar o monitoramento automatico.", font_size="13sp", halign="left", valign="top", size_hint_y=None, padding=(dp(8), dp(8)))
+        self.lbl_boletim = Label(
+            text="Conecte ao veiculo para iniciar o monitoramento automatico ou toque em CHECK-UP PRE-PARTIDA.",
+            font_size="13sp",
+            markup=True,
+            halign="left",
+            valign="top",
+            size_hint_y=None,
+            padding=(dp(8), dp(8)),
+        )
         self.lbl_boletim.bind(width=lambda inst, w: setattr(inst, "text_size", (w, None)))
         self.lbl_boletim.bind(texture_size=lambda inst, ts: setattr(inst, "height", max(dp(260), itemgetter(1)(ts) + dp(16))))
         scroll.add_widget(self.lbl_boletim)
