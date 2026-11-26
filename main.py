@@ -297,35 +297,12 @@ class TR4ScannerApp(App, TR4EngineMixin):
         root.add_widget(self.lbl_banner_alerta)
 
         barra_con = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(6))
-        self.btn_bt_lista = Button(
-            text="ESCOLHER\nBLUETOOTH",
-            font_size="12sp",
-            bold=True,
-            halign="center",
-            background_normal="",
-            background_color=(0.12, 0.45, 0.78, 1),
-        )
+        self.btn_bt_lista = Button(text="ESCOLHER\nBLUETOOTH", font_size="12sp", bold=True, halign="center", background_normal="", background_color=(0.12, 0.45, 0.78, 1))
         self.btn_bt_lista.bind(on_release=self.conectar_bluetooth)
-
-        self.btn_acao_con = Button(
-            text="CONECTAR",
-            font_size="13sp",
-            bold=True,
-            halign="center",
-            background_normal="",
-            background_color=(0.14, 0.62, 0.35, 1),
-        )
+        self.btn_acao_con = Button(text="CONECTAR", font_size="13sp", bold=True, halign="center", background_normal="", background_color=(0.14, 0.62, 0.35, 1))
         self.btn_acao_con.bind(on_release=self.acao_botao_conexao)
-
-        btn_sim = Button(
-            text="SIMULACAO",
-            font_size="12sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.45, 0.25, 0.68, 1),
-        )
+        btn_sim = Button(text="SIMULACAO", font_size="12sp", bold=True, background_normal="", background_color=(0.45, 0.25, 0.68, 1))
         btn_sim.bind(on_release=self.iniciar_simulacao)
-
         barra_con.add_widget(self.btn_bt_lista)
         barra_con.add_widget(self.btn_acao_con)
         barra_con.add_widget(btn_sim)
@@ -343,13 +320,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
             ("eng", "ENG/DTC"),
         ]
         for nome_scr, rotulo in abas_def:
-            b = Button(
-                text=rotulo,
-                font_size="11sp",
-                bold=True,
-                background_normal="",
-                background_color=(0.18, 0.21, 0.27, 1),
-            )
+            b = Button(text=rotulo, font_size="11sp", bold=True, background_normal="", background_color=(0.18, 0.21, 0.27, 1))
             b.bind(on_release=lambda inst, n=nome_scr: self.trocar_aba(n))
             self.btns_abas[nome_scr] = b
             barra_abas.add_widget(b)
@@ -370,12 +341,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
     def _atualizar_retangulo_borda(self, inst, *args):
         if hasattr(self, "_linha_borda_alerta"):
             pad = dp(2.5)
-            self._linha_borda_alerta.rectangle = (
-                inst.x + pad,
-                inst.y + pad,
-                max(10, inst.width - pad * 2),
-                max(10, inst.height - pad * 2),
-            )
+            self._linha_borda_alerta.rectangle = (inst.x + pad, inst.y + pad, max(10, inst.width - pad * 2), max(10, inst.height - pad * 2))
 
     def trocar_aba(self, nome_scr):
         self.sm.current = nome_scr
@@ -387,26 +353,11 @@ class TR4ScannerApp(App, TR4EngineMixin):
     def _criar_tela_painel(self):
         scr = Screen(name="painel")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
-
         barra_p = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(6))
-        btn_zerar = Button(
-            text="ZERAR MIN / MAX",
-            font_size="11.5sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.24, 0.28, 0.36, 1),
-        )
+        btn_zerar = Button(text="ZERAR MIN / MAX", font_size="11.5sp", bold=True, background_normal="", background_color=(0.24, 0.28, 0.36, 1))
         btn_zerar.bind(on_release=self.zerar_min_max)
-
-        btn_ord_pad = Button(
-            text="ORDEM PADRAO",
-            font_size="11.5sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.20, 0.34, 0.46, 1),
-        )
+        btn_ord_pad = Button(text="ORDEM PADRAO", font_size="11.5sp", bold=True, background_normal="", background_color=(0.20, 0.34, 0.46, 1))
         btn_ord_pad.bind(on_release=self.restaurar_ordem_padrao)
-
         barra_p.add_widget(btn_zerar)
         barra_p.add_widget(btn_ord_pad)
         box.add_widget(barra_p)
@@ -416,7 +367,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
         self.grid_painel.bind(minimum_height=self.grid_painel.setter("height"))
         self.scroll_painel.add_widget(self.grid_painel)
         box.add_widget(self.scroll_painel)
-
         self._reconstruir_cards_painel()
         scr.add_widget(box)
         return scr
@@ -444,38 +394,16 @@ class TR4ScannerApp(App, TR4EngineMixin):
     def _abrir_confirmacao_remover_card(self, pid_id):
         mapa_pids = {p["id"]: p for p in PIDS_DB}
         nome_pid = mapa_pids.get(pid_id, {}).get("nome", pid_id)
-
         box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12))
-        lbl = Label(
-            text=f"Remover '{nome_pid}' do painel principal?\n\n(Voce pode reativar a qualquer momento na aba PIDS.)",
-            font_size="13.5sp",
-            halign="center",
-            valign="middle",
-        )
+        lbl = Label(text=f"Remover '{nome_pid}' do painel principal?\n\n(Voce pode reativar a qualquer momento na aba PIDS.)", font_size="13.5sp", halign="center", valign="middle")
         lbl.bind(size=lambda inst, v: setattr(inst, "text_size", v))
         box.add_widget(lbl)
-
         btns = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(10))
         pop = Popup(title="Remover Card do Painel", content=box, size_hint=(0.86, 0.38))
-
-        b_canc = Button(
-            text="MANTER",
-            font_size="13sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.30, 0.34, 0.40, 1),
-        )
+        b_canc = Button(text="MANTER", font_size="13sp", bold=True, background_normal="", background_color=(0.30, 0.34, 0.40, 1))
         b_canc.bind(on_release=pop.dismiss)
-
-        b_rem = Button(
-            text="REMOVER",
-            font_size="13sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.78, 0.22, 0.22, 1),
-        )
+        b_rem = Button(text="REMOVER", font_size="13sp", bold=True, background_normal="", background_color=(0.78, 0.22, 0.22, 1))
         b_rem.bind(on_release=lambda *a: self._executar_remocao_card(pid_id, pop))
-
         btns.add_widget(b_canc)
         btns.add_widget(b_rem)
         box.add_widget(btns)
@@ -504,15 +432,7 @@ class TR4ScannerApp(App, TR4EngineMixin):
             if not self.selecionados.get(pid_id, False):
                 continue
             p = mapa_pids[pid_id]
-            card = CardPID(
-                pid_id=pid_id,
-                app_ref=self,
-                orientation="vertical",
-                size_hint_y=None,
-                height=dp(106),
-                padding=(dp(6), dp(6)),
-                spacing=dp(2),
-            )
+            card = CardPID(pid_id=pid_id, app_ref=self, orientation="vertical", size_hint_y=None, height=dp(106), padding=(dp(6), dp(6)), spacing=dp(2))
             if pid_id == pid_arrastando:
                 card.opacity = 0.25
             with card.canvas.before:
@@ -522,28 +442,12 @@ class TR4ScannerApp(App, TR4EngineMixin):
             card.bind(size=lambda inst, v, r=bg: setattr(r, "size", v))
 
             unid_txt = f" ({p['unidade']})" if p["unidade"] else ""
-            lbl_nome = Label(
-                text=f"{p['nome']}{unid_txt}",
-                font_size="12.5sp",
-                bold=True,
-                color=(0.82, 0.87, 0.94, 1),
-                halign="center",
-                valign="middle",
-                size_hint_y=0.36,
-            )
+            lbl_nome = Label(text=f"{p['nome']}{unid_txt}", font_size="12.5sp", bold=True, color=(0.82, 0.87, 0.94, 1), halign="center", valign="middle", size_hint_y=0.36)
             lbl_nome.bind(size=lambda inst, v: setattr(inst, "text_size", v))
 
             val_atual = self.valores_atuais.get(pid_id, "--")
             txt_val = f"{val_atual}" if val_atual != "--" else "--"
-            lbl_val = Label(
-                text=txt_val,
-                font_size="23sp",
-                bold=True,
-                color=(0.25, 0.92, 0.55, 1),
-                halign="center",
-                valign="middle",
-                size_hint_y=0.40,
-            )
+            lbl_val = Label(text=txt_val, font_size="23sp", bold=True, color=(0.25, 0.92, 0.55, 1), halign="center", valign="middle", size_hint_y=0.40)
             lbl_val.bind(size=lambda inst, v: setattr(inst, "text_size", v))
 
             rodape = BoxLayout(size_hint_y=0.24)
@@ -563,7 +467,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
     def _criar_tela_pids(self):
         scr = Screen(name="pids")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
-
         top_btns = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
         b_rap = Button(text="PADRAO\nRAPIDO", font_size="10.5sp", bold=True, halign="center", background_normal="", background_color=(0.15, 0.48, 0.72, 1))
         b_rap.bind(on_release=lambda *a: self._aplicar_preset_pids("rapido"))
@@ -580,7 +483,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
         lista = GridLayout(cols=1, spacing=dp(4), size_hint_y=None)
         lista.bind(minimum_height=lista.setter("height"))
         self.checks_pids = {}
-
         for p in PIDS_DB:
             pid_id = p["id"]
             linha = BoxLayout(size_hint_y=None, height=dp(42), padding=(dp(6), 0))
@@ -593,7 +495,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
             linha.add_widget(chk)
             linha.add_widget(lbl)
             lista.add_widget(linha)
-
         scroll.add_widget(lista)
         box.add_widget(scroll)
         scr.add_widget(box)
@@ -623,7 +524,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
         self.pids_graf = ["LAMBDA_1", None, None]
         self.graficos_lista = []
         cores = [(0.22, 0.88, 0.48, 1), (0.95, 0.55, 0.22, 1), (0.28, 0.72, 0.98, 1)]
-
         for idx in range(3):
             pid_ini = itemgetter(idx)(self.pids_graf)
             texto_ini = "Nenhum" if pid_ini is None else next((k for k, v in self.mapa_spinner_pid.items() if v == pid_ini), "Nenhum")
@@ -715,39 +615,15 @@ class TR4ScannerApp(App, TR4EngineMixin):
     def _criar_tela_boletim(self):
         scr = Screen(name="boletim")
         box = BoxLayout(orientation="vertical", spacing=dp(6))
-
-        btn_check = Button(
-            text="CHECK-UP PRE-PARTIDA (8 SISTEMAS)",
-            size_hint_y=None,
-            height=dp(44),
-            font_size="12.5sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.12, 0.56, 0.48, 1),
-        )
+        btn_check = Button(text="CHECK-UP PRE-PARTIDA (8 SISTEMAS)", size_hint_y=None, height=dp(44), font_size="12.5sp", bold=True, background_normal="", background_color=(0.12, 0.56, 0.48, 1))
         btn_check.bind(on_release=self.executar_checkup_pre_partida)
         box.add_widget(btn_check)
 
-        self.lbl_bol_status = Label(
-            text="TELEMETRIA EM PAUSA (Aguardando conexao)",
-            size_hint_y=None,
-            height=dp(26),
-            font_size="11.5sp",
-            bold=True,
-            color=(1.0, 0.78, 0.2, 1),
-        )
+        self.lbl_bol_status = Label(text="TELEMETRIA EM PAUSA (Aguardando conexao)", size_hint_y=None, height=dp(26), font_size="11.5sp", bold=True, color=(1.0, 0.78, 0.2, 1))
         box.add_widget(self.lbl_bol_status)
 
         scroll = ScrollView(bar_width=dp(6))
-        self.lbl_boletim = Label(
-            text="Conecte ao veiculo para iniciar o monitoramento automatico ou toque em CHECK-UP PRE-PARTIDA.",
-            font_size="13sp",
-            markup=True,
-            halign="left",
-            valign="top",
-            size_hint_y=None,
-            padding=(dp(8), dp(8)),
-        )
+        self.lbl_boletim = Label(text="Conecte ao veiculo para iniciar o monitoramento automatico ou toque em CHECK-UP PRE-PARTIDA.", font_size="13sp", markup=True, halign="left", valign="top", size_hint_y=None, padding=(dp(8), dp(8)))
         self.lbl_boletim.bind(width=lambda inst, w: setattr(inst, "text_size", (w, None)))
         self.lbl_boletim.bind(texture_size=lambda inst, ts: setattr(inst, "height", max(dp(260), itemgetter(1)(ts) + dp(16))))
         scroll.add_widget(self.lbl_boletim)
