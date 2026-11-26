@@ -1545,7 +1545,7 @@ class TR4EngineMixin:
         self.lbl_eng.text = "Executando Reset Profundo SFS e consulta de Seed (1085)..."
         threading.Thread(target=self._reset_profundo_sfs_thread, daemon=True).start()
 
-            def _reset_profundo_sfs_thread(self):
+    def _reset_profundo_sfs_thread(self):
         time.sleep(0.25)
         log_sfs = [f"RESET SFS (SESSAO 1081 / 3101 + 3102 + 11XX) - {datetime.now()}"]
 
