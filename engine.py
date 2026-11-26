@@ -491,20 +491,32 @@ class TR4EngineMixin:
         if hasattr(self, "lbl_boletim"):
             self.lbl_boletim.text = self.gerar_texto_boletim()
 
-    def salvar_boletim_txt(self, *args):
+        def salvar_boletim_txt(self, *args):
         try:
             pasta = self._obter_pasta_gravacao()
-            nome_arq = os.path.join(pasta, f"BOLETIM_TR4_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-            texto = self.gerar_texto_boletim()
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            atual_ui = getattr(self.lbl_boletim, "text", "") if hasattr(self, "lbl_boletim") else ""
+
+            if "CHECK-UP PRE-PARTIDA" in atual_ui:
+                import re
+                prefixo = "CHECKUP_TR4"
+                texto_limpo = re.sub(r"\[/?(?:b|color=[^\]]+)\]", "", atual_ui)
+            else:
+                prefixo = "BOLETIM_TR4"
+                texto_limpo = self.gerar_texto_boletim()
+
+            nome_arq = os.path.join(pasta, f"{prefixo}_{ts}.txt")
             with open(nome_arq, "w", encoding="utf-8") as f:
-                f.write(f"Gerado em: {datetime.now()}\n\n" + texto)
+                f.write(f"Gerado em: {datetime.now()}\n\n" + texto_limpo)
+
             if hasattr(self, "lbl_boletim"):
-                self.lbl_boletim.text = f"[b][color=33EE66][ V ] BOLETIM SALVO COM SUCESSO![/color][/b]\nArquivo: {nome_arq}\n\n" + texto
-            if hasattr(self, "lbl_eng"):
-                self.lbl_eng.text = f"Boletim salvo com sucesso em:\n{nome_arq}"
+                self.lbl_boletim.text = (
+                    f"[b][color=33EE66][ V ] ARQUIVO SALVO COM SUCESSO![/color][/b]\n"
+                    f"Arquivo: {nome_arq}\n\n" + atual_ui
+                )
         except Exception as e:
             if hasattr(self, "lbl_boletim"):
-                self.lbl_boletim.text = f"[b][color=FF4444][ X ] Erro ao salvar boletim:[/color][/b] {e}"
+                self.lbl_boletim.text = f"[b][color=FF4444][ X ] Erro ao salvar arquivo:[/color][/b] {e}"
 
     def _fmt_item_checkup(self, nivel, titulo, detalhe):
         if nivel == "OK":
