@@ -998,7 +998,7 @@ class TR4EngineMixin:
             self.parar_gravacao_log()
         self._fechar_socket_bt()
         self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
-                if hasattr(self, "lbl_bol_status"):
+        if hasattr(self, "lbl_bol_status"):
             self.lbl_bol_status.text = "TELEMETRIA EM PAUSA (Aguardando conexao)"
             self.lbl_bol_status.color = (1.0, 0.78, 0.2, 1)
         self._atualizar_visual_alerta("")
@@ -1780,7 +1780,7 @@ class TR4EngineMixin:
         self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
         self.valores_min = {}
         self.valores_max = {}
-                if hasattr(self, "lbl_bol_status"):
+        if hasattr(self, "lbl_bol_status"):
             self.lbl_bol_status.text = "TELEMETRIA EM PAUSA (Aguardando conexao)"
             self.lbl_bol_status.color = (1.0, 0.78, 0.2, 1)
         self._atualizar_visual_alerta("")
