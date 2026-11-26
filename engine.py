@@ -1236,7 +1236,7 @@ class TR4EngineMixin:
             self._atualizar_status(f"ECU CONECTADA | K-LINE ATIVO{rec_tag}", (0.2, 0.95, 0.45, 1))
         elif self.estado_conexao == "SIMULACAO":
             self._atualizar_status(f"SIMULACAO ATIVA | IAW 4AM{rec_tag}", (0.3, 0.9, 0.5, 1))
-                    if hasattr(self, "lbl_bol_status"):
+        if hasattr(self, "lbl_bol_status"):
             if self.estado_conexao in ("CONECTADO", "SIMULACAO"):
                 dur_b = max(0, int(time.time() - self.tel.get("inicio_ts", time.time())))
                 mb, sb = divmod(dur_b, 60)
