@@ -16,7 +16,6 @@ from kivy.uix.button import Button
 from kivy.uix.label import Label
 from pids import PIDS_DB
 
-# Lista ordenada de PIDs secundarios monitorados em rodizio leve
 PIDS_VIGILANCIA_BG = [
     "ECT", "VBAT", "TI_EFETIVO", "AVANCO",
     "KNOCK_MAX", "KNOCK_NOISE", "STFT", "LTFT",
@@ -845,6 +844,7 @@ class TR4EngineMixin:
             return
         self.rodando = False
         self.varrendo = False
+        self.sniffer_ativo = False
         self.modo_simulacao = False
         if getattr(self, "gravando_log", False):
             self.parar_gravacao_log()
@@ -1403,49 +1403,21 @@ class TR4EngineMixin:
         if not self.modo_simulacao and (not self.rodando or not self.bt_out or not self.bt_in):
             self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ou SIMULACAO primeiro."
             return
-
         box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12))
         lbl_aviso = Label(
-            text=(
-                "ATENCAO:\n\n"
-                "Este comando apaga os codigos de falha (DTC) e "
-                "tambem ZERA os parametros auto-adaptativos "
-                "(aprendizado de combustivel A/F e marcha lenta) da ECU.\n\n"
-                "Deseja continuar?"
-            ),
+            text="ATENCAO:\n\nEste comando apaga os codigos de falha (DTC) e ZERA os parametros auto-adaptativos da ECU.\n\nDeseja continuar?",
             font_size="13.5sp",
             halign="center",
             valign="middle",
         )
         lbl_aviso.bind(size=lambda inst, v: setattr(inst, "text_size", v))
         box.add_widget(lbl_aviso)
-
         botoes = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(10))
-        popup = Popup(
-            title="Confirmar Reset da ECU",
-            content=box,
-            size_hint=(0.90, 0.48),
-            auto_dismiss=False,
-        )
-
-        btn_nao = Button(
-            text="CANCELAR",
-            font_size="13sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.35, 0.38, 0.44, 1),
-        )
+        popup = Popup(title="Confirmar Reset da ECU", content=box, size_hint=(0.90, 0.48), auto_dismiss=False)
+        btn_nao = Button(text="CANCELAR", font_size="13sp", bold=True, background_normal="", background_color=(0.35, 0.38, 0.44, 1))
         btn_nao.bind(on_release=popup.dismiss)
-
-        btn_sim = Button(
-            text="CONFIRMAR RESET",
-            font_size="13sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.82, 0.32, 0.14, 1),
-        )
+        btn_sim = Button(text="CONFIRMAR RESET", font_size="13sp", bold=True, background_normal="", background_color=(0.82, 0.32, 0.14, 1))
         btn_sim.bind(on_release=lambda *a: self._confirmar_apagar_dtcs(popup))
-
         botoes.add_widget(btn_nao)
         botoes.add_widget(btn_sim)
         box.add_widget(botoes)
@@ -1457,10 +1429,7 @@ class TR4EngineMixin:
         except Exception:
             pass
         if self.modo_simulacao:
-            self.lbl_eng.text = (
-                "Simulacao: Falhas (DTC) apagadas e parametros\n"
-                "auto-adaptativos (A/F e lenta) resetados!"
-            )
+            self.lbl_eng.text = "Simulacao: Falhas (DTC) apagadas e parametros auto-adaptativos resetados!"
             return
         self.rodando = False
         self.lbl_eng.text = "Apagando falhas e resetando parametros auto-adaptativos..."
@@ -1469,123 +1438,132 @@ class TR4EngineMixin:
     def _apagar_dtcs_thread(self):
         time.sleep(0.25)
         resp = self.enviar_comando_raw("14FF00", timeout=2.0)
-        if "54" in resp.upper():
-            msg = (
-                "Falhas (DTC) apagadas e parametros\n"
-                "auto-adaptativos (A/F e lenta) resetados!\n\n"
-                "Rode ~10 min para a ECU reaprender a mistura."
-            )
-        else:
-            msg = f"Comando enviado ({resp})"
+        msg = "Falhas (DTC) apagadas e parametros auto-adaptativos resetados!" if "54" in resp.upper() else f"Comando enviado ({resp})"
         Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", msg))
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
 
-    def reset_profundo_sfs(self, *args):
-        if not self.modo_simulacao and (not self.rodando or not self.bt_out or not self.bt_in):
-            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
+    def iniciar_sniffer_kline(self, *args):
+        if getattr(self, "sniffer_ativo", False):
+            self.sniffer_ativo = False
+            self.lbl_eng.text = "Encerrando Sniffer K-Line e salvando arquivo..."
             return
-
-        box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12))
-        lbl_aviso = Label(
-            text=(
-                "RESET PROFUNDO SFS (FLEX / EEPROM):\n\n"
-                "Executa rotinas de fabrica Marelli (Servicos 31 / 30) "
-                "e consulta niveis de seguranca (Seed 27).\n\n"
-                "Faca com CHAVE LIGADA e MOTOR PARADO.\nDeseja iniciar?"
-            ),
-            font_size="13sp",
-            halign="center",
-            valign="middle",
-        )
-        lbl_aviso.bind(size=lambda inst, v: setattr(inst, "text_size", v))
-        box.add_widget(lbl_aviso)
-
-        botoes = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(10))
-        popup = Popup(
-            title="Reset Profundo SFS - IAW 4AM",
-            content=box,
-            size_hint=(0.92, 0.50),
-            auto_dismiss=False,
-        )
-
-        btn_nao = Button(
-            text="CANCELAR",
-            font_size="13sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.35, 0.38, 0.44, 1),
-        )
-        btn_nao.bind(on_release=popup.dismiss)
-
-        btn_sim = Button(
-            text="EXECUTAR RESET SFS",
-            font_size="13sp",
-            bold=True,
-            background_normal="",
-            background_color=(0.72, 0.18, 0.42, 1),
-        )
-        btn_sim.bind(on_release=lambda *a: self._confirmar_reset_sfs(popup))
-
-        botoes.add_widget(btn_nao)
-        botoes.add_widget(btn_sim)
-        box.add_widget(botoes)
-        popup.open()
-
-    def _confirmar_reset_sfs(self, popup):
-        try:
-            popup.dismiss()
-        except Exception:
-            pass
+        if getattr(self, "varrendo", False):
+            return
         if self.modo_simulacao:
-            self.lbl_eng.text = "Simulacao: Rotina SFS executada e EEPROM adaptativa zerada."
+            self.lbl_eng.text = (
+                "Simulacao Sniffer (ATMA):\n"
+                "[0.12s] 81 10 F1 81 E3\n"
+                "[0.18s] 83 F1 10 C1 E9 8F BD\n"
+                "[0.45s] 82 10 F1 27 01 AC\n"
+                "[0.51s] 86 F1 10 67 01 D6 8D 49 63 8B"
+            )
+            return
+        if not self.bt_socket or not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "Conecte o adaptador Bluetooth primeiro!"
             return
         self.rodando = False
-        self.lbl_eng.text = "Executando Reset Profundo SFS e consulta de Seed (1085)..."
-        threading.Thread(target=self._reset_profundo_sfs_thread, daemon=True).start()
-
-    def _reset_profundo_sfs_thread(self):
-        time.sleep(0.25)
-        log_sfs = [f"COLETA SEEDS 2701 (SESSAO 1085) - {datetime.now()}"]
-        seeds = []
-
-        for tentativa in range(1, 4):
-            r_ses = self.enviar_comando_raw("1085", timeout=1.0)
-            time.sleep(0.15)
-            r_seed = self.enviar_comando_raw("2701", timeout=1.0)
-            log_sfs.append(f"Amostra {tentativa} -> 1085: {r_ses} | 2701: {r_seed}")
-            seeds.append(r_seed)
-            self.enviar_comando_raw("1081", timeout=1.0)
-            time.sleep(0.4)
-
-        try:
-            pasta = self._obter_pasta_gravacao()
-            arq = os.path.join(pasta, f"RESET_SFS_IAW4AM_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-            with open(arq, "w", encoding="utf-8") as f:
-                f.write("\n".join(log_sfs))
-        except Exception:
-            arq = "Nao salvo"
-
-        msg = (
-            "Coleta de Seeds (2701) Concluida!\n\n"
-            + "\n".join(f"{i+1}) {s}" for i, s in enumerate(seeds))
-            + f"\n\nSalvo em: {arq}"
+        self.sniffer_ativo = True
+        self.lbl_eng.text = (
+            "Preparando adaptador em modo 100% PASSIVO (sem transmitir na K-Line)...\n"
+            "Toque novamente em SNIFFER K-LINE ou PARAR para encerrar."
         )
-        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", msg))
+        threading.Thread(target=self._executar_sniffer_thread, daemon=True).start()
+
+    def _executar_sniffer_thread(self):
+        time.sleep(0.35)
+        pasta = self._obter_pasta_gravacao()
+        nome_arq = os.path.join(pasta, f"SNIFFER_KLINE_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+        self.enviar_comando_raw("ATZ", timeout=2.0)
+        for cmd in ("ATE0", "ATL1", "ATS1", "ATH1", "ATAT1", "ATST64", "ATSP5", "ATAR"):
+            self.enviar_comando_raw(cmd, timeout=0.6)
+
+        Clock.schedule_once(
+            lambda dt: setattr(
+                self.lbl_eng,
+                "text",
+                "SNIFFER K-LINE ATIVO (ESCUTA SILENCIOSA)\n\nOpere o scanner profissional agora.\nToque novamente no botao para SALVAR.",
+            )
+        )
+        linhas_capturadas = 0
+        t_ini = time.time()
+        lock = getattr(self, "bt_lock", None)
+        if lock:
+            lock.acquire()
+        try:
+            self._limpar_buffer_bt()
+            self.bt_out.write(b"ATMA\r")
+            self.bt_out.flush()
+            with open(nome_arq, "w", encoding="utf-8") as f:
+                f.write(f"SNIFFER PASSIVO K-LINE (IAW 4AM) - {datetime.now()}\n" + "=" * 60 + "\n")
+                f.flush()
+                buf = bytearray()
+                ultimo_ui = time.time()
+                ultimas_linhas = []
+                while getattr(self, "sniffer_ativo", False) and self.bt_socket:
+                    if self.bt_in.available() > 0:
+                        b = self.bt_in.read()
+                        if b < 0:
+                            break
+                        if b in (10, 13):
+                            linha = buf.decode("ascii", errors="ignore").strip()
+                            buf.clear()
+                            if linha and linha != ">" and "ATMA" not in linha.upper():
+                                reg = f"[{time.time() - t_ini:07.3f}s] {linha}"
+                                f.write(reg + "\n")
+                                linhas_capturadas += 1
+                                ultimas_linhas.append(reg)
+                                if len(ultimas_linhas) > 6:
+                                    ultimas_linhas.pop(0)
+                                if linhas_capturadas % 10 == 0:
+                                    f.flush()
+                        elif b != 62:
+                            buf.append(b)
+                    else:
+                        time.sleep(0.005)
+                    agora = time.time()
+                    if agora - ultimo_ui >= 0.6:
+                        ultimo_ui = agora
+                        preview = "\n".join(ultimas_linhas) if ultimas_linhas else "Aguardando trafego na K-Line..."
+                        txt_ui = f"SNIFFER ATIVO | Quadros: {linhas_capturadas}\n{'-' * 36}\n{preview}"
+                        Clock.schedule_once(lambda dt, m=txt_ui: setattr(self.lbl_eng, "text", m))
+                f.flush()
+            try:
+                self.bt_out.write(b"\r")
+                self.bt_out.flush()
+                time.sleep(0.3)
+                self._limpar_buffer_bt()
+            except Exception:
+                pass
+        except Exception as e:
+            Clock.schedule_once(lambda dt, err=str(e): setattr(self.lbl_eng, "text", f"Erro no Sniffer: {err}"))
+        finally:
+            if lock:
+                lock.release()
+
+        self.sniffer_ativo = False
+        if self.estado_conexao == "CONECTADO" and self.bt_socket:
+            for cmd in ("ATH0", "ATS0", "ATL0", "ATST0A", "ATSH8110F1", "ATWM8110F13E"):
+                self.enviar_comando_raw(cmd, timeout=0.6)
+            self.enviar_comando_raw("ATFI", timeout=2.5)
+            self.enviar_comando_raw("1081", timeout=1.5)
+
+        msg_fim = f"Sniffer K-Line finalizado!\n\nQuadros gravados: {linhas_capturadas}\n\nSalvo em:\n{nome_arq}"
+        Clock.schedule_once(lambda dt, m=msg_fim: setattr(self.lbl_eng, "text", m))
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
 
     def buscar_modulos_kwp(self, *args):
         if self.modo_simulacao:
-            self.lbl_eng.text = "Simulacao:\n[0x10] Injecao Motor (IAW 4AM) - ATIVO\n[0x18] Cambio AT - Sem resposta"
+            self.lbl_eng.text = "Simulacao:\n[0x10] Injecao Motor (IAW 4AM) - ATIVO"
             return
         if not self.bt_socket or not self.bt_out or not self.bt_in:
             self.lbl_eng.text = "Conecte o scanner primeiro!"
             return
         self.rodando = False
-        self.lbl_eng.text = "Encerrando sessao atual e buscando modulos no Pino 7...\n\nAguarde ~20 segundos..."
+        self.lbl_eng.text = "Buscando modulos no Pino 7... Aguarde ~20s..."
         threading.Thread(target=self._buscar_modulos_thread, daemon=True).start()
 
     def _buscar_modulos_thread(self):
@@ -1593,26 +1571,14 @@ class TR4EngineMixin:
         self.enviar_comando_raw("82", timeout=1.0)
         self.enviar_comando_raw("ATPC", timeout=0.8)
         time.sleep(0.4)
-
-        alvos = [
-            ("10", "Injecao Eletronica (ECU)"),
-            ("11", "Motor / Coprocessador"),
-            ("18", "Transmissao Automatica (TCU)"),
-            ("28", "Freios ABS / Tracao"),
-            ("40", "Carroceria / BCM"),
-            ("58", "Airbag (SRS)"),
-            ("60", "Painel / Imobilizador"),
-        ]
+        alvos = [("10", "Injecao (ECU)"), ("11", "Coprocessador"), ("18", "Cambio AT"), ("28", "ABS"), ("40", "BCM"), ("58", "Airbag"), ("60", "Imobilizador")]
         resultados = []
         for addr, nome in alvos:
             if self.estado_conexao != "CONECTADO":
                 return
-            msg_step = f"Testando endereco 0x{addr} ({nome})..."
-            Clock.schedule_once(lambda dt, m=msg_step: setattr(self.lbl_eng, "text", m))
-            self.enviar_comando_raw("ATSP5", timeout=0.8)
-            self.enviar_comando_raw("ATST64", timeout=0.8)
-            self.enviar_comando_raw(f"ATSH81{addr}F1", timeout=0.8)
-            self.enviar_comando_raw(f"ATWM81{addr}F13E", timeout=0.8)
+            Clock.schedule_once(lambda dt, m=f"Testando 0x{addr} ({nome})...": setattr(self.lbl_eng, "text", m))
+            for cmd in ("ATSP5", "ATST64", f"ATSH81{addr}F1", f"ATWM81{addr}F13E"):
+                self.enviar_comando_raw(cmd, timeout=0.8)
             r_fi = self.enviar_comando_raw("ATFI", timeout=2.5)
             r_ses = self.enviar_comando_raw("1081", timeout=1.5)
             limpo = "".join(c for c in (r_fi + r_ses).upper() if c in "0123456789ABCDEF")
@@ -1623,18 +1589,13 @@ class TR4EngineMixin:
                 resultados.append(f"[0x{addr}] {nome}: Sem resposta")
             self.enviar_comando_raw("ATPC", timeout=0.8)
             time.sleep(0.35)
-
         if self.estado_conexao != "CONECTADO":
             return
-        self.enviar_comando_raw("ATSP5", timeout=0.8)
-        self.enviar_comando_raw("ATST64", timeout=0.8)
-        self.enviar_comando_raw("ATSH8110F1", timeout=0.8)
-        self.enviar_comando_raw("ATWM8110F13E", timeout=0.8)
+        for cmd in ("ATSP5", "ATST64", "ATSH8110F1", "ATWM8110F13E"):
+            self.enviar_comando_raw(cmd, timeout=0.8)
         self.enviar_comando_raw("ATFI", timeout=2.5)
         self.enviar_comando_raw("1081", timeout=1.5)
-
-        texto_final = "Resultado da Busca de Modulos (Pino 7):\n\n" + "\n".join(resultados)
-        Clock.schedule_once(lambda dt, t=texto_final: setattr(self.lbl_eng, "text", t))
+        Clock.schedule_once(lambda dt, t="Resultado Busca (Pino 7):\n\n" + "\n".join(resultados): setattr(self.lbl_eng, "text", t))
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
@@ -1645,16 +1606,15 @@ class TR4EngineMixin:
         estava_conectado = (getattr(self, "estado_conexao", "") == "CONECTADO")
         self.rodando = False
         self.varrendo = False
+        self.sniffer_ativo = False
         self.modo_simulacao = False
         self.parar_gravacao_log()
-
         if estava_conectado and self.bt_out and self.bt_in:
             try:
                 self.enviar_comando_raw("82", timeout=0.5)
                 self.enviar_comando_raw("ATPC", timeout=0.4)
             except Exception:
                 pass
-
         self._fechar_socket_bt()
         self.valores_atuais = {p["id"]: "--" for p in PIDS_DB}
         self.valores_min = {}
@@ -1667,7 +1627,7 @@ class TR4EngineMixin:
         self._atualizar_status("DESCONECTADO | ECU: IAW 4AM.AR (4AMMS)", (1, 0.78, 0.2, 1))
 
     def iniciar_varredura_ecu(self, *args):
-        if getattr(self, "varrendo", False):
+        if getattr(self, "varrendo", False) or getattr(self, "sniffer_ativo", False):
             return
         if self.modo_simulacao:
             self.lbl_eng.text = "Simulacao: 2131, 213B, 2147 ativos."
@@ -1681,7 +1641,10 @@ class TR4EngineMixin:
         threading.Thread(target=self._executar_varredura_thread, daemon=True).start()
 
     def parar_varredura_ecu(self, *args):
-        if getattr(self, "varrendo", False):
+        if getattr(self, "sniffer_ativo", False):
+            self.sniffer_ativo = False
+            self.lbl_eng.text = "Encerrando Sniffer K-Line e salvando arquivo..."
+        elif getattr(self, "varrendo", False):
             self.varrendo = False
             self.lbl_eng.text = "Parando varredura e salvando parcial..."
 
@@ -1695,30 +1658,22 @@ class TR4EngineMixin:
                 break
             cmd = f"21{code:02X}"
             if code % 8 == 0:
-                msg_prog = f"Varrendo endereco {cmd} de 21FF...\n\nPIDs ativos encontrados: {len(encontrados)}"
-                Clock.schedule_once(lambda dt, m=msg_prog: setattr(self.lbl_eng, "text", m))
+                Clock.schedule_once(lambda dt, m=f"Varrendo {cmd} de 21FF...\n\nEncontrados: {len(encontrados)}": setattr(self.lbl_eng, "text", m))
             resp = self.enviar_comando_raw(cmd, timeout=0.9)
             limpo = "".join(c for c in resp.upper() if c in "0123456789ABCDEF")
-            prefixo_ok = f"61{code:02X}"
-            idx = limpo.find(prefixo_ok)
+            idx = limpo.find(f"61{code:02X}")
             if idx != -1:
                 dados = limpo[idx + 4:]
                 pares = " ".join(dados[i:i + 2] for i in range(0, len(dados) - 1, 2))
                 encontrados.append(f"{cmd} -> {pares}")
-
         self.varrendo = False
         try:
             with open(nome_arq, "w", encoding="utf-8") as f:
-                f.write(f"MAPA DE PIDS ATIVOS - ECU IAW 4AM ({datetime.now()})\n")
-                f.write(f"Total encontrados: {len(encontrados)}\n" + "=" * 45 + "\n")
-                f.write("\n".join(encontrados))
+                f.write(f"MAPA DE PIDS ATIVOS - ECU IAW 4AM ({datetime.now()})\nTotal: {len(encontrados)}\n" + "=" * 45 + "\n" + "\n".join(encontrados))
             resumo = f"Salvo em:\n{nome_arq}"
         except Exception as e:
-            resumo = f"Erro ao salvar arquivo: {e}"
-
-        msg_fim = f"Varredura finalizada!\n\nTotal encontrados: {len(encontrados)}\n\n{resumo}"
-        Clock.schedule_once(lambda dt, m=msg_fim: setattr(self.lbl_eng, "text", m))
+            resumo = f"Erro ao salvar: {e}"
+        Clock.schedule_once(lambda dt, m=f"Varredura finalizada!\n\nTotal: {len(encontrados)}\n\n{resumo}": setattr(self.lbl_eng, "text", m))
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
-
