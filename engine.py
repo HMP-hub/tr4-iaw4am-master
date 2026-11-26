@@ -654,7 +654,7 @@ class TR4EngineMixin:
             self.rodando = True
             self.loop_leitura()
 
-        def _caminho_config_bt(self):
+    def _caminho_config_bt(self):
         base = "."
         try:
             cand = getattr(self, "user_data_dir", ".")
