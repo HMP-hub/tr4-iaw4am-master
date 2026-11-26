@@ -775,7 +775,6 @@ class TR4ScannerApp(App, TR4EngineMixin):
             ("INFO ECU E ODOMETRO", (0.42, 0.24, 0.64, 1), self.ler_info_ecu),
             ("BUSCAR MODULOS", (0.20, 0.48, 0.60, 1), self.buscar_modulos_kwp),
             ("CAPTURAR CALIBRACAO\n(4 ESTADOS + MODO 01)", (0.08, 0.62, 0.58, 1), self.capturar_calibracao_ecu),
-            ("SALVAR BOLETIM TXT", (0.24, 0.42, 0.56, 1), self.salvar_boletim_txt),
             ("VARRER ECU", (0.14, 0.58, 0.36, 1), self.iniciar_varredura_ecu),
             ("PARAR VARREDURA\nOU SNIFFER", (0.76, 0.22, 0.22, 1), self.parar_varredura_ecu),
         ]
