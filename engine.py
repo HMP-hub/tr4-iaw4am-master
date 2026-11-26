@@ -491,7 +491,7 @@ class TR4EngineMixin:
         if hasattr(self, "lbl_boletim"):
             self.lbl_boletim.text = self.gerar_texto_boletim()
 
-        def salvar_boletim_txt(self, *args):
+    def salvar_boletim_txt(self, *args):
         try:
             pasta = self._obter_pasta_gravacao()
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
