@@ -506,7 +506,7 @@ class TR4EngineMixin:
             if hasattr(self, "lbl_boletim"):
                 self.lbl_boletim.text = f"[b][color=FF4444][ X ] Erro ao salvar boletim:[/color][/b] {e}"
 
-        def _fmt_item_checkup(self, nivel, titulo, detalhe):
+    def _fmt_item_checkup(self, nivel, titulo, detalhe):
         if nivel == "OK":
             tag = "[b][color=33EE66][ V ][/color][/b]"
         elif nivel == "ALERTA":
