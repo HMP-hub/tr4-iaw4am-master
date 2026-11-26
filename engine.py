@@ -991,15 +991,17 @@ class TR4EngineMixin:
                     if self.parse_bytes_kwp(raw_hb, "21A2"):
                         comandos_validos = 1
 
-                if comandos_validos == 0:
+                    if comandos_validos == 0:
                     ciclos_sem_resposta += 1
-                    if ciclos_sem_resposta >= 5:
+                    if ciclos_sem_resposta in (4, 9, 14):
+                        self.enviar_comando_raw("3E", timeout=0.5)
+                    if ciclos_sem_resposta >= 18:
                         self.rodando = False
                         Clock.schedule_once(
                             lambda dt: self._tratar_perda_conexao("ECU DESCONECTADA (CHAVE DESLIGADA / SEM RESPOSTA)")
                         )
                         break
-                    time.sleep(0.08)
+                    time.sleep(0.10)
                     continue
                 else:
                     ciclos_sem_resposta = 0
