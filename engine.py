@@ -500,7 +500,7 @@ class TR4EngineMixin:
             if "CHECK-UP PRE-PARTIDA" in atual_ui:
                 import re
                 prefixo = "CHECKUP_TR4"
-                texto_limpo = re.sub(r"\[/?(?:b|color=[^\]]+)\]", "", atual_ui)
+                texto_limpo = re.sub(r"\[[^\]]+\]", "", atual_ui)
             else:
                 prefixo = "BOLETIM_TR4"
                 texto_limpo = self.gerar_texto_boletim()
@@ -636,11 +636,12 @@ class TR4EngineMixin:
             else:
                 itens.append(self._fmt_item_checkup("ERRO", "Borboleta (TPS)", f"{tps:.1f}% com pedal solto (Verificar cabo/TPS)"))
 
-        # 6. Sonda Lambda
+        # 6. Sonda Lambda               
         if lam is not None:
-            if 350 <= lam <= 550 and rpm == 0:
-                itens.append(self._fmt_item_checkup("OK", "Sonda Lambda Pre-Cat", f"{lam} mV (Polarizacao de repouso OK)"))
-            elif 50 <= lam <= 980:
+            if rpm == 0 and 0 <= lam <= 600:
+                desc_lam = f"{lam} mV (Sonda fria em repouso - aguarda partida)" if lam < 100 else f"{lam} mV (Polarizacao de repouso OK)"
+                itens.append(self._fmt_item_checkup("OK", "Sonda Lambda Pre-Cat", desc_lam))
+            elif 10 <= lam <= 1050:
                 itens.append(self._fmt_item_checkup("OK", "Sonda Lambda Pre-Cat", f"{lam} mV (Sinal ativo)"))
             else:
                 itens.append(self._fmt_item_checkup("ERRO", "Sonda Lambda Pre-Cat", f"{lam} mV (Fora da faixa - verificar chicote)"))
