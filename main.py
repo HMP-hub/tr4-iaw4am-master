@@ -656,7 +656,8 @@ class TR4ScannerApp(App, TR4EngineMixin):
         grid_btns = GridLayout(cols=2, spacing=dp(7), size_hint_y=0.62)
         botoes_eng = [
             ("LER FALHAS (DTC)", (0.12, 0.46, 0.78, 1), self.ler_dtcs),
-            ("APAGAR FALHAS +\nRESET ADAPTATIVO", (0.82, 0.38, 0.12, 1), self.apagar_dtcs),
+            ("APAGAR FALHAS (DTC)", (0.82, 0.38, 0.12, 1), self.apagar_dtcs),
+            ("RESET PROFUNDO SFS\n(UNLOCK 2701 + 3101)", (0.85, 0.18, 0.24, 1), self.reset_profundo_sfs),
             ("SNIFFER K-LINE\n(ESCUTA ATMA)", (0.56, 0.22, 0.68, 1), self.iniciar_sniffer_kline),
             ("INFO ECU E ODOMETRO", (0.42, 0.24, 0.64, 1), self.ler_info_ecu),
             ("BUSCAR MODULOS", (0.20, 0.48, 0.60, 1), self.buscar_modulos_kwp),
