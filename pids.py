@@ -70,13 +70,6 @@ def _calc_ltft_2154(b):
         return None
     return val
 
-def _calc_iac_213a(b):
-    v = _u16(b, 0)
-    if v is None:
-        return None
-    if v > 255:
-        return v & 0xFF
-    return v
 
 def _calc_etanol_pct_217b(b):
     v = _u16(b, 0)
@@ -104,8 +97,9 @@ def _calc_tipo_comb_217b(b):
         return f"E{pct} (ALC)"
     return f"E{pct:02d} (FLEX)"
 
+
 PIDS_DB = [
-    {
+        {
         "id": "STFT",
         "nome": "Ajuste Curto (STFT)",
         "cmd": "21A4",
@@ -213,7 +207,6 @@ PIDS_DB = [
         "calc": lambda b: _u16(b, 2),
         "sim": lambda t: 0,
     },
-
     {
         "id": "ECT",
         "nome": "Temp. Agua",
@@ -297,12 +290,12 @@ PIDS_DB = [
     },
     {
         "id": "CORR_IGN",
-        "nome": "Correcao Ignicao",
-        "cmd": "2165",
+        "nome": "Correcao Avanco",
+        "cmd": "216C",
         "unidade": "deg",
         "rapido": False,
-        "calc": lambda b: round((_u16(b, 0) - 256.0) * 0.5, 1) if _u16(b, 0) is not None else None,
-        "sim": lambda t: -1.0,
+        "calc": lambda b: round(_s16(b, 0) * 0.125, 1) if _s16(b, 0) is not None else None,
+        "sim": lambda t: -1.5,
     },
     {
         "id": "MAPA_AF",
@@ -322,15 +315,14 @@ PIDS_DB = [
         "calc": _calc_tipo_comb_217b,
         "sim": lambda t: "E27 (FLEX)",
     },
-
     {
         "id": "CLOSED_LOOP",
         "nome": "Status Malha",
-        "cmd": "2161",
+        "cmd": "2157",
         "unidade": "st",
         "rapido": False,
-        "calc": lambda b: round(_u16(b, 0) / 100.0, 1) if _u16(b, 0) is not None else None,
-        "sim": lambda t: 4.0,
+        "calc": lambda b: _u8(b, 0),
+        "sim": lambda t: 4,
     },
     {
         "id": "IAT",
@@ -344,16 +336,16 @@ PIDS_DB = [
     {
         "id": "IAC",
         "nome": "Atuador Lenta (IAC)",
-        "cmd": "213A",
+        "cmd": "213B",
         "unidade": "passos",
         "rapido": False,
-        "calc": _calc_iac_213a,
-        "sim": lambda t: 69,
+        "calc": _u16,
+        "sim": lambda t: 72,
     },
     {
         "id": "RPM_ALVO",
         "nome": "RPM Alvo Lenta",
-        "cmd": "213B",
+        "cmd": "213A",
         "unidade": "rpm",
         "rapido": False,
         "calc": _u16,
@@ -362,10 +354,10 @@ PIDS_DB = [
     {
         "id": "BARO",
         "nome": "Pressao Barometrica",
-        "cmd": "2147",
+        "cmd": "2160",
         "unidade": "kPa",
         "rapido": False,
-        "calc": lambda b: round(_u16(b, 10) / 10.0, 1) if _u16(b, 10) is not None else None,
+        "calc": lambda b: round(_u16(b, 0) / 10.0, 1) if _u16(b, 0) is not None else None,
         "sim": lambda t: 97.9,
     },
     {
@@ -380,38 +372,47 @@ PIDS_DB = [
     {
         "id": "TI_BASE",
         "nome": "Tempo Injecao Base",
-        "cmd": "216A",
+        "cmd": "216B",
         "unidade": "ms",
         "rapido": False,
-        "calc": lambda b: round(_u16(b, 0) * 0.004, 2) if _u16(b, 0) is not None else None,
+        "calc": lambda b: round(_u16(b, 0) * 0.01, 2) if _u16(b, 0) is not None else None,
         "sim": lambda t: 1.80,
+    },
+    {
+        "id": "AC_STATUS",
+        "nome": "Ar Condicionado",
+        "cmd": "215B",
+        "unidade": "st",
+        "rapido": False,
+        "calc": lambda b: _u8(b, 0),
+        "sim": lambda t: 0,
     },
     {
         "id": "REGIME_MOTOR",
         "nome": "Regime Operacao",
-        "cmd": "2160",
+        "cmd": "21A1",
         "unidade": "st",
         "rapido": False,
-        "calc": lambda b: round(_u16(b, 0) / 100.0, 1) if _u16(b, 0) is not None else None,
-        "sim": lambda t: 2.0,
+        "calc": lambda b: _u8(b, 14),
+        "sim": lambda t: 2,
     },
     {
         "id": "ESTADO_MOTOR",
         "nome": "Estado Funcionamento",
-        "cmd": "21A0",
+        "cmd": "21A6",
         "unidade": "st",
         "rapido": False,
-        "calc": lambda b: round(_u16(b, 0) / 100.0, 1) if _u16(b, 0) is not None else None,
-        "sim": lambda t: 4.0,
+        "calc": lambda b: _u8(b, 4),
+        "sim": lambda t: 4,
     },
     {
         "id": "MOVIMENTO",
         "nome": "Status Movimento",
-        "cmd": "21A1",
+        "cmd": "21A6",
         "unidade": "st",
         "rapido": False,
-        "calc": lambda b: round(_u16(b, 0) / 100.0, 1) if _u16(b, 0) is not None else None,
-        "sim": lambda t: 0.0,
+        "calc": lambda b: _u8(b, 5),
+        "sim": lambda t: 0,
     },
     {
         "id": "MARCHA_IND",
@@ -419,17 +420,16 @@ PIDS_DB = [
         "cmd": "21A7",
         "unidade": "marcha",
         "rapido": False,
-        "calc": _u16,
+        "calc": lambda b: _u8(b, 0),
         "sim": lambda t: 0,
     },
     {
         "id": "FAN_STATUS",
         "nome": "Ventoinha Radiador",
-        "cmd": "21A3",
+        "cmd": "21A6",
         "unidade": "st",
         "rapido": False,
-        "calc": lambda b: round(_u16(b, 0) / 100.0, 1) if _u16(b, 0) is not None else None,
-        "sim": lambda t: 0.0,
+        "calc": lambda b: _u8(b, 8),
+        "sim": lambda t: 1,
     },
 ]
-
