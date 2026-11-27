@@ -106,7 +106,6 @@ class TR4EngineMixin:
         self.ordem_pids = ativos + inativos
         if hasattr(self, "_reconstruir_cards_painel"):
             self._reconstruir_cards_painel(pid_arrastando=pid_origem)
-
     def _init_telemetria_viagem(self):
         self.tel = {
             "inicio_ts": time.time(),
@@ -207,7 +206,6 @@ class TR4EngineMixin:
                 t["tempo_para_80c"] = round(agora - t["inicio_ts"], 0)
             if ect >= 98.0:
                 t["tempo_acima_98c"] += dt
-
         motor_rodando = isinstance(rpm, (int, float)) and rpm >= 650
         sob_carga = (isinstance(tps, (int, float)) and tps >= 12.0) or (isinstance(mp, (int, float)) and mp >= 52.0)
         k_max = self.valores_atuais.get("KNOCK_MAX")
@@ -337,7 +335,6 @@ class TR4EngineMixin:
         elif pobre_wot:
             alerta = f"RISCO MISTURA POBRE EM CARGA (SONDA {lam:.0f} mV)!"
         t["alerta_critico_atual"] = alerta
-
     def gerar_texto_boletim(self):
         if not hasattr(self, "tel"):
             self._init_telemetria_viagem()
@@ -450,7 +447,6 @@ class TR4EngineMixin:
             )
         else:
             det_bat = "  - Aguardando amostras com motor em funcionamento."
-
         if t["ti_lenta_n"] >= 3:
             ti_med = t["ti_lenta_soma"] / t["ti_lenta_n"]
             if ti_med < 1.8:
@@ -553,12 +549,10 @@ class TR4EngineMixin:
         if hasattr(self, "lbl_boletim"):
             self.lbl_boletim.text = "Executando Check-Up Pre-Partida nos 8 sistemas da ECU..."
         threading.Thread(target=self._checkup_pre_partida_thread, daemon=True).start()
-
-    
     def _checkup_pre_partida_thread(self):
         time.sleep(0.25)
         b_a2 = self.parse_bytes_kwp(self.enviar_comando_raw("21A2", timeout=1.0), "21A2")
-        b_47 = self.parse_bytes_kwp(self.enviar_comando_raw("2147", timeout=1.0), "2147")
+        b_60 = self.parse_bytes_kwp(self.enviar_comando_raw("2160", timeout=1.0), "2160")
         b_45 = self.parse_bytes_kwp(self.enviar_comando_raw("2145", timeout=1.0), "2145")
         b_7b = self.parse_bytes_kwp(self.enviar_comando_raw("217B", timeout=1.0), "217B")
         b_68 = self.parse_bytes_kwp(self.enviar_comando_raw("2168", timeout=1.0), "2168")
@@ -571,7 +565,7 @@ class TR4EngineMixin:
         tps_raw = ((itemgetter(8)(b_a2) << 8) | itemgetter(9)(b_a2)) if len(b_a2) >= 10 else 1
         tps = 0.0 if ((tps_raw - 1.0) / 835.0) * 100.0 < 0.35 else round(((tps_raw - 1.0) / 835.0) * 100.0, 1)
         vbat = round(((itemgetter(16)(b_a2) << 8) | itemgetter(17)(b_a2)) * 0.1, 1) if len(b_a2) >= 18 else None
-        baro = round(((itemgetter(10)(b_47) << 8) | itemgetter(11)(b_47)) / 10.0, 1) if len(b_47) >= 12 else None
+        baro = round(((itemgetter(0)(b_60) << 8) | itemgetter(1)(b_60)) / 10.0, 1) if len(b_60) >= 2 else None
         lam = ((itemgetter(0)(b_45) << 8) | itemgetter(1)(b_45)) if len(b_45) >= 2 else None
         kv = round((((itemgetter(0)(b_68) << 8) | itemgetter(1)(b_68)) / 1023.0) * 5.0, 2) if len(b_68) >= 2 else None
 
@@ -579,7 +573,6 @@ class TR4EngineMixin:
         if rpm > 0:
             itens.append(self._fmt_item_checkup("ALERTA", "Aviso de Motor", f"Motor ligado ({rpm} rpm). Para teste completo, faca com chave ON e motor parado."))
 
-        # 1. DTCs
         limpo_dtc = "".join(c for c in resp_dtc.upper() if c in "0123456789ABCDEF")
         idx_58 = limpo_dtc.find("58")
         if idx_58 != -1 and len(limpo_dtc) >= idx_58 + 4:
@@ -591,7 +584,6 @@ class TR4EngineMixin:
         else:
             itens.append(self._fmt_item_checkup("ALERTA", "Memoria Falhas (MIL)", "Nao foi possivel ler DTCs"))
 
-        # 2. Bateria
         if vbat is None:
             itens.append(self._fmt_item_checkup("ALERTA", "Bateria", "Sem leitura"))
         elif rpm > 0:
@@ -604,7 +596,6 @@ class TR4EngineMixin:
         else:
             itens.append(self._fmt_item_checkup("ERRO", "Bateria Pre-Partida", f"{vbat:.1f} V (Tensao baixa - risco na partida)"))
 
-        # 3. MAP vs BARO
         if mp is not None and baro is not None:
             if rpm == 0:
                 diff_p = abs(mp - baro)
@@ -617,7 +608,6 @@ class TR4EngineMixin:
             else:
                 itens.append(self._fmt_item_checkup("OK", "Pressao MAP / Baro", f"MAP {mp:.1f} kPa | Baro {baro:.1f} kPa"))
 
-        # 4. ECT vs IAT
         if ect is not None and iat is not None:
             diff_t = abs(ect - iat)
             if rpm == 0 and diff_t <= 6.0:
@@ -629,14 +619,12 @@ class TR4EngineMixin:
             else:
                 itens.append(self._fmt_item_checkup("OK", "Temperaturas (ECT/IAT)", f"Agua {ect:.0f} C | Ar {iat:.0f} C"))
 
-        # 5. TPS
         if rpm == 0:
             if tps <= 0.4:
                 itens.append(self._fmt_item_checkup("OK", "Borboleta (TPS)", "0.0% em repouso (Fechada e calibrada)"))
             else:
                 itens.append(self._fmt_item_checkup("ERRO", "Borboleta (TPS)", f"{tps:.1f}% com pedal solto (Verificar cabo/TPS)"))
 
-        # 6. Sonda Lambda               
         if lam is not None:
             if rpm == 0 and 0 <= lam <= 600:
                 desc_lam = f"{lam} mV (Sonda fria em repouso - aguarda partida)" if lam < 100 else f"{lam} mV (Polarizacao de repouso OK)"
@@ -646,7 +634,6 @@ class TR4EngineMixin:
             else:
                 itens.append(self._fmt_item_checkup("ERRO", "Sonda Lambda Pre-Cat", f"{lam} mV (Fora da faixa - verificar chicote)"))
 
-        # 7. Combustivel SFS
         if len(b_7b) >= 2:
             raw_7b = (itemgetter(0)(b_7b) << 8) | itemgetter(1)(b_7b)
             pct_alc = int(max(0.0, min(100.0, round((raw_7b / 488.9) * 100.0, 0))))
@@ -654,7 +641,6 @@ class TR4EngineMixin:
             tipo_c = f"E{pct_alc:02d} (GAS)" if pct_alc <= 3 else (f"E{pct_alc} (ALC)" if pct_alc >= 95 else f"E{pct_alc:02d} (FLEX)")
             itens.append(self._fmt_item_checkup("OK", "Combustivel SFS (217B)", f"{tipo_c} | Mapa {af_val}:1"))
 
-        # 8. Sensor Knock
         if kv is not None:
             if 0.03 <= kv <= 3.5:
                 itens.append(self._fmt_item_checkup("OK", "Sensor Detonacao (Knock)", f"{kv:.2f} V (Circuito integro)"))
@@ -666,7 +652,6 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
-
     def _caminho_config_bt(self):
         base = "."
         try:
@@ -771,7 +756,6 @@ class TR4EngineMixin:
             request_permissions(perms)
         except Exception:
             pass
-
     def conectar_bluetooth(self, *args):
         if getattr(self, "estado_conexao", "") == "CONECTANDO":
             self.cancelar_tentativa_conexao()
@@ -804,14 +788,7 @@ class TR4EngineMixin:
             except Exception:
                 pass
         box = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(10))
-        box.add_widget(
-            Label(
-                text="Toque no scanner para conectar agora:",
-                size_hint_y=0.10,
-                bold=True,
-                font_size="14sp",
-            )
-        )
+        box.add_widget(Label(text="Toque no scanner para conectar agora:", size_hint_y=0.10, bold=True, font_size="14sp"))
         scroll = ScrollView(size_hint_y=0.78, bar_width=dp(6))
         lista = GridLayout(cols=1, spacing=dp(12), size_hint_y=None, padding=(dp(4), dp(6)))
         lista.bind(minimum_height=lista.setter("height"))
@@ -824,28 +801,13 @@ class TR4EngineMixin:
             eh_salvo = (addr and addr == self.bt_salvo_addr)
             rotulo = f"{nome}  [SALVO]" if eh_salvo else nome
             cor_btn = (0.14, 0.58, 0.38, 1) if eh_salvo else (0.14, 0.42, 0.68, 1)
-            btn = Button(
-                text=rotulo,
-                size_hint_y=None,
-                height=dp(64),
-                font_size="16sp",
-                bold=True,
-                background_normal="",
-                background_color=cor_btn,
-            )
+            btn = Button(text=rotulo, size_hint_y=None, height=dp(64), font_size="16sp", bold=True, background_normal="", background_color=cor_btn)
             btn.bind(on_release=lambda inst, a=addr, n=nome, p=popup: self._ao_escolher_dispositivo_bt(a, n, p))
             lista.add_widget(btn)
 
         scroll.add_widget(lista)
         box.add_widget(scroll)
-        btn_fechar = Button(
-            text="CANCELAR",
-            size_hint_y=0.12,
-            font_size="14sp",
-            background_normal="",
-            background_color=(0.75, 0.22, 0.22, 1),
-            bold=True,
-        )
+        btn_fechar = Button(text="CANCELAR", size_hint_y=0.12, font_size="14sp", background_normal="", background_color=(0.75, 0.22, 0.22, 1), bold=True)
         btn_fechar.bind(on_release=popup.dismiss)
         box.add_widget(btn_fechar)
         popup.open()
@@ -868,11 +830,7 @@ class TR4EngineMixin:
         seq = self._con_seq
         self._atualizar_estado_conexao("CONECTANDO")
         self._atualizar_status(f"CONECTANDO BT ({nome_dev})...", (1.0, 0.78, 0.2, 1))
-        threading.Thread(
-            target=self._conectar_tudo_thread,
-            args=(seq, addr, nome_dev),
-            daemon=True,
-        ).start()
+        threading.Thread(target=self._conectar_tudo_thread, args=(seq, addr, nome_dev), daemon=True).start()
 
     def _abortado(self, seq):
         return getattr(self, "cancelar_conexao", False) or seq != getattr(self, "_con_seq", 0)
@@ -909,10 +867,7 @@ class TR4EngineMixin:
             self.bt_out = sock.getOutputStream()
             self._bt_io_erro = False
 
-            Clock.schedule_once(
-                lambda dt: self._atualizar_status(f"BT OK ({nome_dev}) | INICIANDO K-LINE ECU...", (1.0, 0.78, 0.2, 1))
-            )
-
+            Clock.schedule_once(lambda dt: self._atualizar_status(f"BT OK ({nome_dev}) | INICIANDO K-LINE ECU...", (1.0, 0.78, 0.2, 1)))
             self._limpar_buffer_bt()
             r_atz = self.enviar_comando_raw("ATZ", timeout=2.5)
             log_hs.append(f"Reset Scanner: {r_atz or 'SEM RESPOSTA'}")
@@ -928,9 +883,7 @@ class TR4EngineMixin:
                     return
                 self.enviar_comando_raw(cmd, timeout=0.8)
 
-            Clock.schedule_once(
-                lambda dt: self._atualizar_status("SINCRONIZANDO BARRAMENTO K-LINE...", (1.0, 0.78, 0.2, 1))
-            )
+            Clock.schedule_once(lambda dt: self._atualizar_status("SINCRONIZANDO BARRAMENTO K-LINE...", (1.0, 0.78, 0.2, 1)))
             r_init = self.enviar_comando_raw("ATFI", timeout=3.5)
             log_hs.append(f"Fast Init: {r_init or 'TIMEOUT'}")
             if self._abortado(seq):
@@ -956,9 +909,7 @@ class TR4EngineMixin:
             conectou_real = ("5081" in limpo_sess) or ("61A2" in limpo_map)
 
             if not conectou_real:
-                Clock.schedule_once(
-                    lambda dt: self._falha_conexao("ECU NAO RESPONDEU (CHAVE LIGADA?)", log_hs)
-                )
+                Clock.schedule_once(lambda dt: self._falha_conexao("ECU NAO RESPONDEU (CHAVE LIGADA?)", log_hs))
                 return
 
             self._init_telemetria_viagem()
@@ -974,10 +925,7 @@ class TR4EngineMixin:
             self.rodando = False
             self._fechar_socket_bt()
             log_hs.append(f"Erro: {e}")
-            Clock.schedule_once(
-                lambda dt, err=str(e): self._falha_conexao(f"FALHA CONEXAO: {err[:34]}", log_hs)
-            )
-
+            Clock.schedule_once(lambda dt, err=str(e): self._falha_conexao(f"FALHA CONEXAO: {err[:34]}", log_hs))
     def _sucesso_conexao(self, nome_dev):
         self._atualizar_estado_conexao("CONECTADO")
         self._atualizar_status(f"ECU CONECTADA ({nome_dev}) | K-LINE ATIVO", (0.2, 0.95, 0.45, 1))
@@ -1079,7 +1027,6 @@ class TR4EngineMixin:
             return []
         dados_hex = limpo[idx + 4:]
         return [int(dados_hex[i:i + 2], 16) for i in range(0, len(dados_hex) - 1, 2)]
-
     def _registrar_valor(self, pid_id, valor):
         if valor is None:
             return
@@ -1184,7 +1131,6 @@ class TR4EngineMixin:
                     pass
             Clock.schedule_once(self.atualizar_interface)
             time.sleep(0.08 if self.modo_simulacao else 0.002)
-
     def _atualizar_visual_alerta(self, alerta):
         ativo = bool(alerta) and self.estado_conexao in ("CONECTADO", "SIMULACAO")
         if hasattr(self, "_cor_borda_alerta"):
@@ -1259,7 +1205,6 @@ class TR4EngineMixin:
             else:
                 self.lbl_bol_status.text = "TELEMETRIA EM PAUSA (Aguardando conexao)"
                 self.lbl_bol_status.color = (1.0, 0.78, 0.2, 1)
-
     def _obter_pasta_gravacao(self):
         pasta_dl = "/sdcard/Download"
         try:
@@ -1333,7 +1278,6 @@ class TR4EngineMixin:
             self.lbl_log_status_bar.color = (0.75, 0.80, 0.88, 1)
         if hasattr(self, "lbl_log_info") and arq:
             self.lbl_log_info.text = f"LOG ENCERRADO E SALVO ({qtd} linhas):\n{arq}"
-
     def _classificar_estado_calibracao(self, b_a2, b_a6):
         if len(b_a2) >= 2:
             r0, r1 = itemgetter(0, 1)(b_a2)
@@ -1462,7 +1406,6 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
-
     def ler_info_ecu(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = (
@@ -1572,7 +1515,6 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
-
     def apagar_dtcs(self, *args):
         if not self.modo_simulacao and (not self.rodando or not self.bt_out or not self.bt_in):
             self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR ou SIMULACAO primeiro."
@@ -1626,25 +1568,15 @@ class TR4EngineMixin:
         if getattr(self, "varrendo", False):
             return
         if self.modo_simulacao:
-            self.lbl_eng.text = (
-                "Simulacao Sniffer (ATMA):\n"
-                "[0.12s] 81 10 F1 81 E3\n"
-                "[0.18s] 83 F1 10 C1 E9 8F BD\n"
-                "[0.45s] 82 10 F1 27 01 AC\n"
-                "[0.51s] 86 F1 10 67 01 D6 8D 49 63 8B"
-            )
+            self.lbl_eng.text = "Simulacao Sniffer (ATMA):\n[0.12s] 81 10 F1 81 E3\n[0.45s] 82 10 F1 27 01 AC"
             return
         if not self.bt_socket or not self.bt_out or not self.bt_in:
             self.lbl_eng.text = "Conecte o adaptador Bluetooth primeiro!"
             return
         self.rodando = False
         self.sniffer_ativo = True
-        self.lbl_eng.text = (
-            "Preparando adaptador em modo 100% PASSIVO (sem transmitir na K-Line)...\n"
-            "Toque novamente em SNIFFER K-LINE ou PARAR para encerrar."
-        )
+        self.lbl_eng.text = "Preparando adaptador em modo 100% PASSIVO (sem transmitir na K-Line)..."
         threading.Thread(target=self._executar_sniffer_thread, daemon=True).start()
-
     def _executar_sniffer_thread(self):
         time.sleep(0.35)
         pasta = self._obter_pasta_gravacao()
@@ -1652,14 +1584,7 @@ class TR4EngineMixin:
         self.enviar_comando_raw("ATZ", timeout=2.0)
         for cmd in ("ATE0", "ATL1", "ATS1", "ATH1", "ATAT1", "ATST64", "ATSP5", "ATAR"):
             self.enviar_comando_raw(cmd, timeout=0.6)
-
-        Clock.schedule_once(
-            lambda dt: setattr(
-                self.lbl_eng,
-                "text",
-                "SNIFFER K-LINE ATIVO (ESCUTA SILENCIOSA)\n\nOpere o scanner profissional agora.\nToque novamente no botao para SALVAR.",
-            )
-        )
+        Clock.schedule_once(lambda dt: setattr(self.lbl_eng, "text", "SNIFFER K-LINE ATIVO (ESCUTA SILENCIOSA)\n\nOpere o scanner profissional agora.\nToque novamente no botao para SALVAR."))
         linhas_capturadas = 0
         t_ini = time.time()
         lock = getattr(self, "bt_lock", None)
@@ -1728,7 +1653,6 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
-
     def buscar_modulos_kwp(self, *args):
         if self.modo_simulacao:
             self.lbl_eng.text = "Simulacao:\n[0x10] Injecao Motor (IAW 4AM) - ATIVO"
