@@ -991,7 +991,10 @@ class TR4EngineMixin:
             lock.acquire()
         try:
             self._limpar_buffer_bt()
-            self.bt_out.write((cmd + "\r").encode("ascii"))
+            cmd_env = cmd.strip().upper()
+            if len(cmd_env) == 4 and cmd_env.startswith("21") and cmd_env not in ("21A0", "21A1", "21A2", "21A3", "21A4", "21A5"):
+                cmd_env += "1"
+            self.bt_out.write((cmd_env + "\r").encode("ascii"))
             self.bt_out.flush()
             resposta = bytearray()
             t_limite = time.time() + timeout
