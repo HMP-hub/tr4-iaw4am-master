@@ -1562,6 +1562,163 @@ class TR4EngineMixin:
         if self.estado_conexao == "CONECTADO" and self.bt_socket:
             self.rodando = True
             self.loop_leitura()
+    def _calcular_key_marelli(self, seed_bytes, little_endian=False):
+        if little_endian:
+            r14 = (seed_bytes[1] << 8) | seed_bytes[0]
+            r15 = (seed_bytes[3] << 8) | seed_bytes[2]
+        else:
+            r15 = (seed_bytes[0] << 8) | seed_bytes[1]
+            r14 = (seed_bytes[2] << 8) | seed_bytes[3]
+
+        for _ in range(6):
+            soma = r14 + 0x8103
+            carry = 1 if soma > 0xFFFF else 0
+            r14 = soma & 0xFFFF
+            r15 = (r15 + 0x2547 + carry) & 0xFFFF
+
+            r14 ^= 0xCE87
+            r15 ^= 0x1911
+
+            r1 = r14 & 0x0001
+            r2 = r15 & 0x8000
+
+            soma = r14 + r14
+            carry = 1 if soma > 0xFFFF else 0
+            r14 = soma & 0xFFFF
+            r15 = (r15 + r15 + carry) & 0xFFFF
+
+            r3 = r2 >> 15
+            r4 = (r1 << 15) & 0xFFFF
+            r14 |= r3
+            r15 |= r4
+            cond = r1 | r2
+
+            if cond != 0:
+                r14 ^= 0x74AB
+                r15 ^= 0x2237
+
+                r1 = r14 & 0x0007
+                r2 = r15 & 0x0007
+                r3 = r15 & 0x0007
+
+                r14 >>= 3
+                r15 >>= 3
+
+                r3 = (r3 << 13) & 0xFFFF
+                r14 |= r3
+
+                r2 = (r2 << 13) & 0xFFFF
+                r15 |= r2
+
+            soma = r14 + 0xAC81
+            carry = 1 if soma > 0xFFFF else 0
+            r14 = soma & 0xFFFF
+            r15 = (r15 + 0xD11A + carry) & 0xFFFF
+
+            r14 ^= 0x391D
+            r15 ^= 0xA071
+
+        if little_endian:
+            return bytes([r14 & 0xFF, (r14 >> 8) & 0xFF, r15 & 0xFF, (r15 >> 8) & 0xFF])
+        return bytes([(r15 >> 8) & 0xFF, r15 & 0xFF, (r14 >> 8) & 0xFF, r14 & 0xFF])
+
+    def reset_profundo_sfs(self, *args):
+        if self.modo_simulacao:
+            self.lbl_eng.text = "Simulacao: 1085 -> 2701 -> 2702 -> 3101 OK (SFS zerado)."
+            return
+        if not self.rodando or not self.bt_out or not self.bt_in:
+            self.lbl_eng.text = "ECU desconectada! Clique em CONECTAR primeiro."
+            return
+        self.rodando = False
+        self.lbl_eng.text = "Iniciando Unlock KWP (1085 -> 2701 -> 2702 -> 3101)..."
+        threading.Thread(target=self._reset_profundo_sfs_thread, daemon=True).start()
+
+    def _reset_profundo_sfs_thread(self):
+        time.sleep(0.25)
+        log = [f"=== TESTE UNLOCK + RESET SFS ({datetime.now().strftime('%H:%M:%S')}) ==="]
+
+        def _limpar(r):
+            return "".join(c for c in r.upper() if c in "0123456789ABCDEF")
+
+        def _atualizar_ui():
+            txt = "\n".join(log[-12:])
+            Clock.schedule_once(lambda dt, m=txt: setattr(self.lbl_eng, "text", m))
+
+        b_sfs_antes = self.parse_bytes_kwp(self.enviar_comando_raw("217B", timeout=1.0), "217B")
+        sfs_ini = ((b_sfs_antes[0] << 8) | b_sfs_antes[1]) if len(b_sfs_antes) >= 2 else None
+        log.append(f"SFS (217B) antes: {sfs_ini} (0x{sfs_ini:04X})" if sfs_ini is not None else "SFS (217B) antes: N/D")
+        _atualizar_ui()
+
+        r_1085 = self.enviar_comando_raw("1085", timeout=1.5)
+        log.append(f"1085 -> {r_1085 or 'TIMEOUT'}")
+        _atualizar_ui()
+
+        desbloqueado = False
+        for modo_nome, le_flag in [("BIG-ENDIAN", False), ("LITTLE-ENDIAN", True)]:
+            r_seed = self.enviar_comando_raw("2701", timeout=1.5)
+            h_seed = _limpar(r_seed)
+            idx_67 = h_seed.find("6701")
+            if idx_67 == -1 or len(h_seed) < idx_67 + 12:
+                log.append(f"[{modo_nome}] Falha ao ler Seed: {r_seed}")
+                _atualizar_ui()
+                if "7F2737" in h_seed:
+                    log.append("ECU pediu delay (37) -> aguardando 10.5s...")
+                    _atualizar_ui()
+                    time.sleep(10.5)
+                    r_seed = self.enviar_comando_raw("2701", timeout=1.5)
+                    h_seed = _limpar(r_seed)
+                    idx_67 = h_seed.find("6701")
+                if idx_67 == -1 or len(h_seed) < idx_67 + 12:
+                    break
+
+            seed_hex = h_seed[idx_67 + 4:idx_67 + 12]
+            seed_bytes = bytes.fromhex(seed_hex)
+            key_bytes = self._calcular_key_marelli(seed_bytes, little_endian=le_flag)
+            key_hex = key_bytes.hex().upper()
+            log.append(f"[{modo_nome}] Seed={seed_hex} -> Key={key_hex}")
+            _atualizar_ui()
+
+            r_key = self.enviar_comando_raw(f"2702{key_hex}", timeout=1.5)
+            h_key = _limpar(r_key)
+            log.append(f"2702 -> {r_key or 'TIMEOUT'}")
+            _atualizar_ui()
+
+            if "6702" in h_key:
+                desbloqueado = True
+                log.append(f"[SUCESSO] ECU DESBLOQUEADA ({modo_nome})!")
+                _atualizar_ui()
+                break
+            elif "7F2736" in h_key or "7F2737" in h_key:
+                log.append("Bloqueio temporario 10.5s...")
+                _atualizar_ui()
+                time.sleep(10.5)
+
+        if desbloqueado:
+            r_3101 = self.enviar_comando_raw("3101", timeout=2.0)
+            log.append(f"3101 -> {r_3101 or 'TIMEOUT'}")
+            if "7101" not in _limpar(r_3101):
+                r_3102 = self.enviar_comando_raw("3102", timeout=2.0)
+                log.append(f"3102 -> {r_3102 or 'TIMEOUT'}")
+            _atualizar_ui()
+
+        self.enviar_comando_raw("1081", timeout=1.2)
+        time.sleep(0.3)
+        b_sfs_dep = self.parse_bytes_kwp(self.enviar_comando_raw("217B", timeout=1.0), "217B")
+        sfs_fim = ((b_sfs_dep[0] << 8) | b_sfs_dep[1]) if len(b_sfs_dep) >= 2 else None
+        log.append(f"SFS (217B) depois: {sfs_fim} (0x{sfs_fim:04X})" if sfs_fim is not None else "SFS (217B) depois: N/D")
+        _atualizar_ui()
+
+        try:
+            pasta = self._obter_pasta_gravacao()
+            arq = os.path.join(pasta, f"UNLOCK_SFS_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+            with open(arq, "w", encoding="utf-8") as f:
+                f.write("\n".join(log))
+        except Exception:
+            pass
+
+        if self.estado_conexao == "CONECTADO" and self.bt_socket:
+            self.rodando = True
+            self.loop_leitura()
 
     def iniciar_sniffer_kline(self, *args):
         if getattr(self, "sniffer_ativo", False):
